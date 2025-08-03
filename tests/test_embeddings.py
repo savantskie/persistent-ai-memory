@@ -12,7 +12,7 @@ from ai_memory_core import PersistentAIMemorySystem
 class EmbeddingTester:
     def __init__(self):
         self.memory_system = PersistentAIMemorySystem()
-        self.embedding_url = "http://192.168.1.50:1234/v1/embeddings"
+        self.embedding_url = "http://127.0.0.1:1234/v1/embeddings"
         self.test_texts = [
             "Python is a versatile programming language",
             "SQLite provides excellent database functionality", 
@@ -268,7 +268,7 @@ async def main():
         if not connection_ok:
             print("\n❌ Cannot continue without LM Studio connection.")
             print("💡 Make sure LM Studio is running with text-embedding-nomic-embed-text-v1.5")
-            print("💡 Check that the embedding endpoint is available at http://192.168.1.50:1234")
+            print("💡 Check that the embedding endpoint is available at http://127.0.0.1:1234")
             return
         
         # Run embedding tests
