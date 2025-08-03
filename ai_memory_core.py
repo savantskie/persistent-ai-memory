@@ -23,6 +23,9 @@ import asyncio
 import aiohttp
 import logging
 import os
+import re
+import time
+import socket
 import numpy as np
 from typing import Any, Dict, List, Optional, Tuple, Union
 from datetime import datetime, timezone, timedelta
@@ -633,14 +636,173 @@ class VSCodeProjectDatabase(DatabaseManager):
 
 
 class ConversationFileMonitor:
-    """Monitors files for conversation changes and auto-imports them"""
+    """Monitors files for conversation changes and auto-imports them.
     
-    def __init__(self, memory_system, watch_directories: List[str] = None):
+    Features:
+    - Automatic MCP server detection to avoid duplicate message processing
+    - Real-time file monitoring with hash-based change detection
+    - Support for VS Code, LM Studio, and Ollama chat files
+    - Message deduplication across sources
+    """
+    
+    def __init__(self, memory_system, watch_directories: List[str] = None, mcp_port: int = 1234):
         self.memory_system = memory_system
         self.watch_directories = watch_directories or []
         self.observer = None
         self.processed_files = set()  # Track processed files to avoid duplicates
+        self.file_hashes = {}  # Track file content hashes to detect changes
+        self.processed_messages = {}  # Track processed messages per file: {file_path: set(message_hashes)}
+        self.mcp_port = mcp_port  # Port to check for MCP server
+        self.mcp_server_running = False  # Will be updated periodically
+        self.last_mcp_check = 0  # Timestamp of last MCP server check
         
+    def _get_default_chat_directories(self) -> List[str]:
+        """Get default chat storage directories for different platforms"""
+        home = Path.home()
+        documents = home / "Documents"
+        downloads = home / "Downloads"
+        directories = []
+        
+        # ChatGPT desktop app directories
+        chatgpt_paths = [
+            home / "AppData" / "Roaming" / "ChatGPT" / "chats",  # Windows
+            home / ".config" / "ChatGPT" / "chats",  # Linux
+            home / "Library" / "Application Support" / "ChatGPT" / "chats"  # macOS
+        ]
+        
+        # Claude desktop app directories
+        claude_paths = [
+            home / "AppData" / "Roaming" / "Anthropic" / "Claude" / "conversations",  # Windows
+            home / ".config" / "anthropic-claude" / "conversations",  # Linux
+            home / "Library" / "Application Support" / "Claude" / "conversations"  # macOS
+        ]
+        
+        # LM Studio conversation directories
+        lm_studio_paths = [
+            home / ".lmstudio" / "conversations",  # Windows/Linux/macOS (new location)
+            home / "AppData" / "Roaming" / "LM Studio" / "conversations",  # Windows (old location)
+            home / ".config" / "lm-studio" / "conversations",  # Linux (old location)
+            home / "Library" / "Application Support" / "LM Studio" / "conversations"  # macOS (old location)
+        ]
+        
+        # Ollama chat directories
+        ollama_paths = [
+            home / ".ollama" / "chats",  # Windows/Linux/macOS (main location)
+            home / "AppData" / "Roaming" / "Ollama" / "chats",  # Windows (alternative)
+            home / ".config" / "ollama" / "chats",  # Linux (alternative)
+            home / "Library" / "Application Support" / "Ollama" / "chats"  # macOS (alternative)
+        ]
+        
+        # VS Code workspace storage directories
+        vscode_base_paths = [
+            home / "AppData" / "Roaming" / "Code" / "User" / "workspaceStorage",  # Windows
+            home / ".config" / "Code" / "User" / "workspaceStorage",  # Linux
+            home / "Library" / "Application Support" / "Code" / "User" / "workspaceStorage"  # macOS
+        ]
+        
+        # Helper function to add paths with logging
+        def add_paths_if_exist(paths: List[Path], app_name: str):
+            for path in paths:
+                if path.exists():
+                    directories.append(str(path))
+                    logger.info(f"Found {app_name} conversations: {path}")
+        
+        # Add paths for each application
+        add_paths_if_exist(lm_studio_paths, "LM Studio")
+        add_paths_if_exist(ollama_paths, "Ollama")
+        add_paths_if_exist(chatgpt_paths, "ChatGPT")
+        add_paths_if_exist(claude_paths, "Claude")
+        
+        # Add VS Code workspace storage paths - find specific workspace hashes
+        for vscode_base in vscode_base_paths:
+            if vscode_base.exists():
+                try:
+                    # Look for workspace hashes (directories with chatSessions folders)
+                    for workspace_hash in vscode_base.iterdir():
+                        if workspace_hash.is_dir():
+                            chat_sessions_dir = workspace_hash / "chatSessions"
+                            if chat_sessions_dir.exists():
+                                directories.append(str(chat_sessions_dir))
+                                logger.info(f"Found VS Code chat sessions: {chat_sessions_dir}")
+                except Exception as e:
+                    logger.error(f"Error scanning VS Code workspace storage: {e}")
+        
+        return directories
+
+    def _check_mcp_server(self) -> bool:
+        """Check if an MCP server is running by attempting a connection.
+        
+        Returns:
+            bool: True if MCP server is running, False otherwise
+        """
+        # Only check every 60 seconds to avoid overhead
+        current_time = time.time()
+        if current_time - self.last_mcp_check < 60:
+            return self.mcp_server_running
+            
+        try:
+            # Try to connect to MCP server port
+            with socket.create_connection(("localhost", self.mcp_port), timeout=1.0):
+                self.mcp_server_running = True
+        except (socket.timeout, ConnectionRefusedError):
+            self.mcp_server_running = False
+        
+        self.last_mcp_check = current_time
+        return self.mcp_server_running
+        
+    async def _is_message_in_mcp(self, msg_hash: str) -> bool:
+        """Check if a message was manually stored through MCP server.
+        
+        Args:
+            msg_hash: Hash of the message content to check
+            
+        Returns:
+            bool: True if message exists in MCP storage, False otherwise
+        """
+        try:
+            # Connect to MCP server
+            reader, writer = await asyncio.open_connection('localhost', self.mcp_port)
+            
+            # Send check request
+            request = json.dumps({
+                'type': 'check_message',
+                'hash': msg_hash
+            }).encode() + b'\n'
+            writer.write(request)
+            await writer.drain()
+            
+            # Get response
+            response = await reader.readline()
+            writer.close()
+            await writer.wait_closed()
+            
+            # Parse response
+            result = json.loads(response.decode())
+            return result.get('exists', False)
+            
+        except Exception as e:
+            logger.debug(f"Failed to check message in MCP: {e}")
+            return False  # If check fails, assume message doesn't exist
+    
+    def _get_mcp_start_time(self) -> Optional[datetime]:
+        """Get the start time of the MCP server if running.
+        
+        Returns:
+            Optional[datetime]: Server start time if available, None otherwise
+        """
+        if not self._check_mcp_server():
+            return None
+            
+        try:
+            with socket.create_connection(("localhost", self.mcp_port), timeout=1.0) as sock:
+                sock.sendall(b"GET_START_TIME\n")
+                response = sock.recv(1024).decode().strip()
+                if response and response != "ERROR":
+                    return datetime.fromisoformat(response)
+        except Exception as e:
+            logger.debug(f"Failed to get MCP start time: {e}")
+        return None
+
     async def start_monitoring(self):
         """Start monitoring conversation files"""
         if not self.watch_directories:
@@ -706,21 +868,47 @@ class ConversationFileMonitor:
             logger.info(f"Added watch directory: {directory}")
     
     async def _process_file_change(self, file_path: str):
-        """Process a changed conversation file"""
+        """Process a changed conversation file with MCP-aware deduplication"""
         try:
             # Check if file is a conversation file (JSON, txt, etc.)
             if not any(file_path.endswith(ext) for ext in ['.json', '.txt', '.md', '.log']):
                 return
             
-            # Generate file hash to avoid duplicate processing
-            file_hash = self._get_file_hash(file_path)
-            if file_hash in self.processed_files:
-                return
+            # Calculate file hash to detect actual content changes
+            with open(file_path, 'rb') as f:
+                file_content = f.read()
+                current_hash = hashlib.md5(file_content).hexdigest()
             
-            self.processed_files.add(file_hash)
+            # Skip if we've already processed this exact content
+            if file_path in self.file_hashes and self.file_hashes[file_path] == current_hash:
+                return
+                
+            self.file_hashes[file_path] = current_hash
+            
+            # Initialize message tracking for this file if needed
+            if file_path not in self.processed_messages:
+                self.processed_messages[file_path] = set()
             
             # Read and parse conversation content
             conversations = await self._extract_conversations(file_path)
+            
+            # Check with MCP server for manually stored messages
+            if self._check_mcp_server():
+                try:
+                    filtered_conversations = []
+                    for conv in conversations:
+                        # Create a hash of the message content and metadata
+                        msg_hash = hashlib.md5(
+                            f"{conv['role']}:{conv['content']}".encode()
+                        ).hexdigest()
+                        
+                        # Check if this exact message was manually stored
+                        if not await self._is_message_in_mcp(msg_hash):
+                            filtered_conversations.append(conv)
+                    conversations = filtered_conversations
+                except Exception as e:
+                    logger.debug(f"Failed to check MCP messages: {e}")
+                    # If we can't check MCP server, process all messages
             
             # Store conversations in database
             for conv in conversations:
@@ -745,12 +933,18 @@ class ConversationFileMonitor:
             return str(hash(file_path))
     
     async def _extract_conversations(self, file_path: str) -> List[Dict]:
-        """Extract conversations from various file formats"""
+        """Extract conversations from various file formats with timestamps"""
         conversations = []
         
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
+                
+            # Get file modification time as fallback timestamp
+            fallback_time = datetime.fromtimestamp(
+                os.path.getmtime(file_path), 
+                timezone.utc
+            ).isoformat()
             
             # Handle JSON format (ChatGPT exports, etc.)
             if file_path.endswith('.json'):
@@ -759,6 +953,8 @@ class ConversationFileMonitor:
                     # Handle different JSON conversation formats
                     if 'mapping' in data:  # ChatGPT format
                         conversations.extend(self._parse_chatgpt_format(data))
+                    elif 'messages' in data:  # Claude format
+                        conversations.extend(self._parse_claude_format(data))
                     elif isinstance(data, list):  # Simple conversation array
                         conversations.extend(self._parse_simple_array(data))
                 except json.JSONDecodeError:
@@ -767,6 +963,11 @@ class ConversationFileMonitor:
             # Handle text formats
             elif file_path.endswith(('.txt', '.md', '.log')):
                 conversations.extend(self._parse_text_format(content))
+            
+            # Ensure all conversations have timestamps
+            for conv in conversations:
+                if 'timestamp' not in conv:
+                    conv['timestamp'] = fallback_time
         
         except Exception as e:
             logger.error(f"Error extracting conversations from {file_path}: {e}")
@@ -774,7 +975,7 @@ class ConversationFileMonitor:
         return conversations
     
     def _parse_chatgpt_format(self, data: Dict) -> List[Dict]:
-        """Parse ChatGPT export format"""
+        """Parse ChatGPT export format with timestamps"""
         conversations = []
         
         try:
@@ -783,9 +984,21 @@ class ConversationFileMonitor:
                     if node.get('message') and node['message'].get('content'):
                         content_parts = node['message']['content'].get('parts', [])
                         if content_parts:
+                            # Try to get create_time from message
+                            timestamp = None
+                            if 'create_time' in node['message']:
+                                try:
+                                    timestamp = datetime.fromtimestamp(
+                                        int(node['message']['create_time']),
+                                        timezone.utc
+                                    ).isoformat()
+                                except (ValueError, TypeError):
+                                    pass
+                            
                             conversations.append({
                                 'role': node['message'].get('author', {}).get('role', 'unknown'),
-                                'content': ' '.join(str(part) for part in content_parts if part)
+                                'content': ' '.join(str(part) for part in content_parts if part),
+                                'timestamp': timestamp
                             })
         except Exception as e:
             logger.error(f"Error parsing ChatGPT format: {e}")
@@ -793,37 +1006,113 @@ class ConversationFileMonitor:
         return conversations
     
     def _parse_simple_array(self, data: List) -> List[Dict]:
-        """Parse simple conversation array format"""
+        """Parse simple conversation array format with timestamps"""
         conversations = []
         
         for item in data:
             if isinstance(item, dict) and 'content' in item:
+                # Look for timestamp in various formats
+                timestamp = None
+                for key in ['timestamp', 'time', 'created_at', 'date']:
+                    if key in item:
+                        try:
+                            # Handle both ISO format strings and Unix timestamps
+                            if isinstance(item[key], (int, float)):
+                                timestamp = datetime.fromtimestamp(item[key], timezone.utc).isoformat()
+                            else:
+                                timestamp = datetime.fromisoformat(str(item[key])).isoformat()
+                            break
+                        except (ValueError, TypeError):
+                            continue
+                
                 conversations.append({
                     'role': item.get('role', 'user'),
-                    'content': str(item['content'])
+                    'content': str(item['content']),
+                    'timestamp': timestamp
                 })
         
         return conversations
     
+    def _parse_claude_format(self, data: Dict) -> List[Dict]:
+        """Parse Claude/Anthropic conversation format"""
+        conversations = []
+        
+        try:
+            # Handle both array and object formats
+            messages = data.get('messages', [])
+            if isinstance(messages, dict):
+                messages = messages.values()
+            
+            for msg in messages:
+                if isinstance(msg, dict) and 'content' in msg:
+                    # Try to extract timestamp
+                    timestamp = None
+                    if 'timestamp' in msg:
+                        try:
+                            timestamp = datetime.fromisoformat(msg['timestamp'])
+                        except (ValueError, TypeError):
+                            pass
+                    
+                    conversations.append({
+                        'role': msg.get('role', 'unknown'),
+                        'content': msg['content'],
+                        'timestamp': timestamp.isoformat() if timestamp else None,
+                        'metadata': {
+                            'source': 'Claude',
+                            'model': data.get('model', 'claude'),
+                            'conversation_id': data.get('conversation_id'),
+                            'message_id': msg.get('id'),
+                            'parent_id': msg.get('parent')
+                        }
+                    })
+        except Exception as e:
+            logger.error(f"Error parsing Claude format: {e}")
+        
+        return conversations
+    
     def _parse_text_format(self, content: str) -> List[Dict]:
-        """Parse text-based conversation formats"""
+        """Parse text-based conversation formats with timestamp detection"""
         conversations = []
         lines = content.split('\n')
         
         current_role = 'user'
         current_content = []
+        current_timestamp = None
+        
+        # Common timestamp patterns
+        timestamp_patterns = [
+            r'\[(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\]',  # ISO format
+            r'\[(\d{2}:\d{2}(?::\d{2})?)\]',  # Time only
+            r'\[(\d{4}-\d{2}-\d{2})\]',  # Date only
+        ]
         
         for line in lines:
             line = line.strip()
             if not line:
                 continue
-                
+            
+            # Try to extract timestamp
+            for pattern in timestamp_patterns:
+                match = re.match(pattern, line)
+                if match:
+                    try:
+                        ts = match.group(1)
+                        # Handle time-only format by adding today's date
+                        if re.match(r'\d{2}:\d{2}(?::\d{2})?$', ts):
+                            ts = f"{datetime.now().date()}T{ts}"
+                        current_timestamp = datetime.fromisoformat(ts).isoformat()
+                        line = line[match.end():].strip()
+                        break
+                    except (ValueError, TypeError):
+                        continue
+            
             # Detect role markers
             if line.lower().startswith(('user:', 'human:', 'me:')):
                 if current_content:
                     conversations.append({
                         'role': current_role,
-                        'content': '\n'.join(current_content)
+                        'content': '\n'.join(current_content),
+                        'timestamp': current_timestamp
                     })
                     current_content = []
                 current_role = 'user'
@@ -868,16 +1157,21 @@ class EmbeddingService:
         try:
             async with aiohttp.ClientSession() as session:
                 payload = {
+                    "model": model,
                     "input": text,
-                    "model": model
                 }
                 
                 async with session.post(self.embeddings_endpoint, json=payload) as response:
                     if response.status == 200:
                         data = await response.json()
-                        return data["data"][0]["embedding"]
+                        if data and "data" in data and len(data["data"]) > 0:
+                            return data["data"][0].get("embedding")
+                        else:
+                            logger.error(f"Invalid response format: {data}")
+                            return None
                     else:
-                        logger.error(f"Embedding API error: {response.status}")
+                        error_text = await response.text()
+                        logger.error(f"Embedding API error {response.status}: {error_text}")
                         return None
         
         except Exception as e:
