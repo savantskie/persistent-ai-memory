@@ -1296,7 +1296,15 @@ class ConversationFileMonitor:
 class EmbeddingService:
     """Handles embedding generation via LM Studio"""
     
-    def __init__(self, base_url: str = "http://192.168.1.50:1234"):
+    def __init__(self, base_url: str = "http://localhost:1234"):
+        """Initialize embedding service with LM Studio URL
+        
+        Args:
+            base_url: LM Studio API URL. Defaults to localhost:1234 which is LM Studio's default.
+                     For Ollama, use "http://localhost:11434"
+                     For local LM Studio, keep as is
+                     For other embedding services, provide full base URL
+        """
         self.base_url = base_url
         self.embeddings_endpoint = f"{base_url}/v1/embeddings"
     

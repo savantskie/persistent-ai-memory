@@ -12,7 +12,8 @@ from ai_memory_core import PersistentAIMemorySystem
 class EmbeddingTester:
     def __init__(self):
         self.memory_system = PersistentAIMemorySystem()
-        self.embedding_url = "http://127.0.0.1:1234/v1/embeddings"
+        # Default to localhost which is LM Studio's default port
+        self.embedding_url = "http://localhost:1234/v1/embeddings"
         self.test_texts = [
             "Python is a versatile programming language",
             "SQLite provides excellent database functionality", 
