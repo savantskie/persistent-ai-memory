@@ -724,7 +724,7 @@ class ConversationFileMonitor:
             
             # Store conversations in database
             for conv in conversations:
-                await self.memory_system.store_conversation_message(
+                await self.memory_system.store_conversation(
                     content=conv['content'],
                     role=conv['role'],
                     metadata={'source_file': file_path, 'imported_at': datetime.now(timezone.utc).isoformat()},
