@@ -614,6 +614,40 @@ class VSCodeProjectDatabase(DatabaseManager):
         
         return session_id
     
+    async def store_development_conversation(self, content: str, session_id: str = None,
+                                          chat_context_id: str = None, decisions_made: str = None,
+                                          code_changes: Dict = None) -> str:
+        """Store a development conversation from VS Code
+        
+        Args:
+            content: The conversation content
+            session_id: Optional project session ID (will create new if none)
+            chat_context_id: Optional VS Code chat context ID
+            decisions_made: Summary of decisions made in conversation
+            code_changes: Dictionary of files changed and their changes
+        """
+        conversation_id = str(uuid.uuid4())
+        timestamp = datetime.now(timezone.utc).isoformat()
+        
+        # Create session if none provided
+        if not session_id:
+            session_id = await self.save_development_session(
+                workspace_path=os.getcwd(),  # Current workspace
+                session_summary="Auto-created session for development conversation"
+            )
+        
+        # Store conversation
+        await self.execute_update(
+            """INSERT INTO development_conversations 
+               (conversation_id, session_id, timestamp, chat_context_id,
+                conversation_content, decisions_made, code_changes)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (conversation_id, session_id, timestamp, chat_context_id,
+             content, decisions_made, json.dumps(code_changes) if code_changes else None)
+        )
+        
+        return conversation_id
+
     async def store_project_insight(self, content: str, insight_type: str = None,
                                   related_files: List[str] = None, importance_level: int = 5,
                                   source_conversation_id: str = None) -> str:
@@ -941,13 +975,35 @@ class ConversationFileMonitor:
                     logger.debug(f"Failed to check MCP messages: {e}")
                     # If we can't check MCP server, process all messages
             
+            # For VS Code chat files, handle development conversations
+            is_vscode_chat = 'vscode' in file_path.lower() or 'chatsessions' in file_path.lower()
+            if is_vscode_chat:
+                # Create development session
+                dev_session_id = await self.memory_system.vscode_db.save_development_session(
+                    workspace_path=os.path.dirname(file_path),
+                    session_summary=f"Imported VS Code chat session from {os.path.basename(file_path)}"
+                )
+                full_conversation = []
+            
             # Store conversations in database
             for conv in conversations:
-                await self.memory_system.store_conversation(
+                result = await self.memory_system.store_conversation(
                     content=conv['content'],
                     role=conv['role'],
                     metadata={'source_file': file_path, 'imported_at': datetime.now(timezone.utc).isoformat()},
                     session_id=self._get_file_hash(file_path)  # Use file hash as session ID for grouping
+                )
+                
+                if is_vscode_chat and not result.get("duplicate", False):
+                    # Add to development conversation
+                    full_conversation.append(f"{conv['role'].title()}: {conv['content']}")
+            
+            # Store development conversation if this is a VS Code chat
+            if is_vscode_chat and full_conversation:
+                await self.memory_system.vscode_db.store_development_conversation(
+                    content="\n\n".join(full_conversation),
+                    session_id=dev_session_id,
+                    chat_context_id=self._get_file_hash(file_path)
                 )
             
             logger.info(f"Imported {len(conversations)} conversations from {file_path}")
