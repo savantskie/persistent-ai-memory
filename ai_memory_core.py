@@ -446,14 +446,60 @@ class PersistentAIMemorySystem:
             "memory_id": memory_id
         }
     
-    async def search_memories(self, query: str, limit: int = 10) -> Dict:
-        """Search memories using semantic similarity"""
-        # Placeholder - implement semantic search
-        return {
-            "status": "success",
-            "results": [],
-            "query": query
-        }
+    async def search_memories(self, query: str, limit: int = 10, 
+                            min_importance: int = None, max_importance: int = None,
+                            memory_type: str = None) -> Dict:
+        """Search memories using semantic similarity with importance filtering"""
+        
+        # Build SQL query with optional filters
+        sql = "SELECT * FROM curated_memories WHERE 1=1"
+        params = []
+        
+        if min_importance is not None:
+            sql += " AND importance_level >= ?"
+            params.append(min_importance)
+            
+        if max_importance is not None:
+            sql += " AND importance_level <= ?"
+            params.append(max_importance)
+            
+        if memory_type is not None:
+            sql += " AND memory_type = ?"
+            params.append(memory_type)
+        
+        # Order by importance (high first), then by creation date
+        sql += " ORDER BY importance_level DESC, timestamp_created DESC LIMIT ?"
+        params.append(limit)
+        
+        try:
+            results = await self.ai_memory_db.execute_query(sql, params)
+            
+            return {
+                "status": "success",
+                "results": [
+                    {
+                        "memory_id": row[0],
+                        "content": row[6],
+                        "importance_level": row[7],
+                        "memory_type": row[5],
+                        "timestamp_created": row[1],
+                        "tags": json.loads(row[8]) if row[8] else []
+                    }
+                    for row in results
+                ],
+                "query": query,
+                "filters": {
+                    "min_importance": min_importance,
+                    "max_importance": max_importance,
+                    "memory_type": memory_type
+                }
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "error": str(e),
+                "results": []
+            }
     
     async def get_system_health(self) -> Dict:
         """Get comprehensive system health"""
