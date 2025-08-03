@@ -42,13 +42,34 @@ python tests/test_health_check.py
 
 ## 🎯 Features
 
-- **Persistent Memory**: SQLite-based storage for conversations, AI memories, schedules, VS Code projects, and MCP tool calls
-- **Vector Search**: Semantic search using embeddings via LM Studio
-- **Real-time Monitoring**: File-based conversation capture with watchdog
-- **MCP Integration**: Model Context Protocol server with tool call logging and AI self-reflection
-- **Multi-Platform Support**: Works with LM Studio, VS Code, Koboldcpp, Ollama, and more
-- **Cross-platform**: Works on Windows, macOS, and Linux
-- **Zero Configuration**: Works out-of-the-box with sensible defaults
+- **Enhanced Memory System**:
+  - SQLite-based persistent storage across all databases
+  - Registry-based extensible import system
+  - Database-backed deduplication across all sources
+  - Incremental imports (only new messages)
+  - Robust error handling and retry logic
+
+- **Dedicated Chat Format Support**:
+  - Independent parsers for each chat GUI
+  - No merged/refactored import logic
+  - Easy addition of new chat formats
+  - Format-specific metadata preservation
+  - Source-aware deduplication
+
+- **Core Features**:
+  - Vector Search using LM Studio embeddings
+  - Real-time conversation monitoring
+  - MCP server with tool call logging
+  - AI self-reflection capabilities
+  - Multi-platform compatibility
+  - Zero configuration needed
+
+- **Platform Support**:
+  - LM Studio integration
+  - VS Code & GitHub Copilot
+  - Koboldcpp compatibility
+  - Ollama chat tracking
+  - Cross-platform (Windows/Linux/macOS)
 
 ## 📚 Quick Start
 
@@ -93,13 +114,39 @@ memory.start_conversation_monitoring("/path/to/conversation/files")
 
 ## 🏗️ Architecture
 
-The system includes 5 specialized databases:
+The system includes 5 specialized databases with enhanced cross-source integration:
 
-1. **Conversations**: Chat history with embeddings for semantic search
-2. **AI Memories**: Long-term persistent AI memories
-3. **Schedule**: Time-based events and reminders
-4. **VS Code Projects**: Project context and file tracking
-5. **MCP Tool Calls**: Model Context Protocol interaction logging
+1. **Conversations**: 
+   - Multi-source chat history with embeddings
+   - Registry-based extensible import system
+   - Independent parsers per chat format
+   - Database-backed deduplication
+   - Source tracking and sync status
+   - Cross-conversation relationships
+   - Incremental import tracking
+   - Comprehensive metadata per source
+
+2. **AI Memories**: 
+   - Long-term persistent AI memories
+   - Cross-source knowledge synthesis
+   - Relationship tracking between memories
+
+3. **Schedule**: 
+   - Time-based events and reminders
+   - Cross-platform calendar integration
+   - Smart scheduling with context
+
+4. **VS Code Projects**: 
+   - Project context and file tracking
+   - Development conversation tracking
+   - Code change history integration
+   - Context-aware project insights
+
+5. **MCP Tool Calls**: 
+   - Model Context Protocol interaction logging
+   - Tool usage analytics
+   - Self-reflection capabilities
+   - Performance monitoring
 
 ## 🔧 Configuration
 
@@ -119,6 +166,10 @@ Check the `examples/` directory for:
 - Conversation tracking
 - MCP server setup
 - Vector search demonstrations
+- Custom chat format integration
+- Deduplication system usage
+- Registry-based importing
+- Source tracking setup
 
 ## 🔌 Platform Integration Guides
 
@@ -132,6 +183,38 @@ Check the `examples/` directory for:
 - **File Monitoring** - Automatic conversation capture from chat logs
 - **HTTP API** - Real-time memory access via REST endpoints  
 - **MCP Protocol** - Standardized tool interface for compatible platforms
+
+### Cross-Source Memory Integration
+
+The system now provides comprehensive cross-source memory management:
+
+- **Source Tracking**: 
+  - Automatic source detection and monitoring
+  - Per-source metadata and sync status
+  - Error tracking and recovery
+  - Active source health monitoring
+
+- **Relationship Management**:
+  - Cross-conversation linking
+  - Context preservation across platforms
+  - Conversation continuation tracking
+  - Reference and fork management
+
+- **Supported Sources**:
+  - VS Code/GitHub Copilot
+  - ChatGPT desktop app
+  - Claude/Anthropic
+  - Character.ai
+  - text-generation-webui
+  - Ollama
+  - Generic text/markdown formats
+  - Custom source support via plugins
+
+- **Sync Features**:
+  - Real-time sync status tracking
+  - Source-specific metadata preservation
+  - Robust deduplication across sources
+  - Failure recovery and retry logic
 
 ## 🧪 Testing
 

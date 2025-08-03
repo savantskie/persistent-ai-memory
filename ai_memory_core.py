@@ -280,10 +280,45 @@ class ConversationDatabase(DatabaseManager):
                     timestamp TEXT NOT NULL,
                     role TEXT NOT NULL,
                     content TEXT NOT NULL,
-                    metadata TEXT,
+                    source_type TEXT NOT NULL,  -- chatgpt, claude, vscode, etc.
+                    source_id TEXT,  -- Original ID from source system
+                    source_url TEXT,  -- URL or path to original content
+                    source_metadata TEXT,  -- Source-specific metadata
+                    sync_status TEXT,  -- pending, synced, error
+                    last_sync TEXT,  -- Last sync timestamp
+                    metadata TEXT,  -- General metadata
                     embedding BLOB,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (conversation_id) REFERENCES conversations (conversation_id)
+                )
+            """)
+            
+            # Source metadata table for tracking chat sources
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS source_tracking (
+                    source_id TEXT PRIMARY KEY,
+                    source_type TEXT NOT NULL,
+                    source_name TEXT NOT NULL,
+                    source_path TEXT,
+                    last_check TEXT NOT NULL,
+                    last_sync TEXT,
+                    status TEXT NOT NULL,
+                    error_count INTEGER DEFAULT 0,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # Cross-source relationships table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS conversation_relationships (
+                    relationship_id TEXT PRIMARY KEY,
+                    source_conversation_id TEXT NOT NULL,
+                    related_conversation_id TEXT NOT NULL,
+                    relationship_type TEXT NOT NULL,  -- continuation, reference, fork, etc.
+                    metadata TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (source_conversation_id) REFERENCES conversations (conversation_id),
+                    FOREIGN KEY (related_conversation_id) REFERENCES conversations (conversation_id)
                 )
             """)
             
