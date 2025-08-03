@@ -288,10 +288,31 @@ class ConversationDatabase(DatabaseManager):
     
     async def store_message(self, content: str, role: str, session_id: str = None, 
                           conversation_id: str = None, metadata: Dict = None) -> Dict[str, str]:
-        """Store a message and auto-manage sessions/conversations"""
+        """Store a message and auto-manage sessions/conversations with duplicate detection"""
         
         timestamp = datetime.now(timezone.utc).isoformat()
         message_id = str(uuid.uuid4())
+        
+        # Check for duplicate messages (same content, role, and session within recent time)
+        if session_id:
+            # Check if we already have this exact message in this session recently
+            existing = await self.execute_query(
+                """SELECT message_id FROM messages 
+                   WHERE conversation_id IN (
+                       SELECT conversation_id FROM conversations WHERE session_id = ?
+                   ) AND role = ? AND content = ? 
+                   AND datetime(timestamp) > datetime('now', '-1 hour')""",
+                (session_id, role, content)
+            )
+            
+            if existing:
+                logger.debug(f"Skipping duplicate message in session {session_id}")
+                return {
+                    "message_id": existing[0]["message_id"],
+                    "conversation_id": None,  # Don't return conversation_id for duplicates
+                    "session_id": session_id,
+                    "duplicate": True
+                }
         
         # Auto-create session if not provided
         if not session_id:
@@ -321,7 +342,8 @@ class ConversationDatabase(DatabaseManager):
         return {
             "message_id": message_id,
             "conversation_id": conversation_id,
-            "session_id": session_id
+            "session_id": session_id,
+            "duplicate": False
         }
     
     async def get_recent_messages(self, limit: int = 10, session_id: str = None) -> List[Dict]:
