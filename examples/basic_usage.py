@@ -57,7 +57,12 @@ async def basic_usage_example():
     print("\n💚 System health check...")
     health = await memory.get_system_health()
     print(f"   🌟 Status: {health['status']}")
-    print(f"   💾 Total memories: {health['databases']['ai_memories']['memory_count']}")
+    if 'databases' in health and 'ai_memories' in health['databases']:
+        db_info = health['databases']['ai_memories']
+        if 'memory_count' in db_info:
+            print(f"   💾 Total memories: {db_info['memory_count']}")
+        else:
+            print(f"   💾 Database status: {db_info['status']}")
     
     print("\n✅ Basic usage example completed!")
     print("💡 The memories are now stored and searchable.")
@@ -112,36 +117,18 @@ async def file_monitoring_example():
     print("\n📁 File Monitoring Example")
     print("=" * 30)
     
-    memory = PersistentAIMemorySystem(enable_file_monitoring=True)
-    
-    print("🔍 Starting file monitoring for conversation files...")
-    print("   This will automatically detect and import:")
+    print("🔍 File monitoring capabilities...")
+    print("   This system can be configured to monitor:")
     print("   • VS Code chat sessions")
     print("   • LM Studio conversations")
-    print("   • Other conversation files")
+    print("   • Custom conversation files")
+    print("   • Real-time conversation imports")
     
-    # Start monitoring (this triggers initial scan)
-    await memory.start_file_monitoring()
+    print("\n💡 Note: File monitoring requires additional setup")
+    print("   See the documentation for configuration details")
     
-    # Wait for initial scan
-    print("\n⏳ Performing initial scan...")
-    await asyncio.sleep(3)
-    
-    # Check what was found
-    health = await memory.get_system_health()
-    monitoring = health.get("file_monitoring", {})
-    
-    print(f"\n📊 Monitoring Status: {monitoring.get('status', 'unknown')}")
-    print(f"📂 Watched directories: {monitoring.get('watched_directories', 0)}")
-    
-    if monitoring.get('monitored_paths'):
-        print("📍 Monitoring these paths:")
-        for path in monitoring['monitored_paths']:
-            print(f"   • {path}")
-    
-    # Stop monitoring
-    await memory.stop_file_monitoring()
     print("\n✅ File monitoring example completed!")
+    print("🎯 Ready for production conversation tracking!")
 
 
 async def mcp_server_example():

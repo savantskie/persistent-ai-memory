@@ -1,87 +1,168 @@
-# Persistent AI Memory System (PAMS)
+# Persistent AI Memory System
 
-🧠 **A comprehensive, real-time memory system for AI assistants with cross-platform conversation capture, semantic search, and MCP server integration.**
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 
-## 🌟 Features
+A comprehensive AI memory system that provides persistent, searchable storage for AI assistants with conversation tracking, MCP tool call logging, and intelligent scheduling.
 
-- **📚 Multi-Database Architecture**: 5 specialized SQLite databases for different memory types
-- **🔄 Real-Time Conversation Capture**: Automatic import from VS Code, LM Studio, and other platforms
-- **🔍 Semantic Search**: Vector embeddings with similarity search across all memory types
-- **🛠️ MCP Server Integration**: Standardized tool interface for AI assistants
-- **📊 Health Monitoring**: Comprehensive system diagnostics and statistics
-- **🔧 Tool Call Logging**: Track and analyze AI assistant tool usage patterns
-- **⚡ Cross-Platform Support**: Windows, Linux, and macOS compatibility
+**🎯 Multiple Installation Options Available:** We've created **4 different ways** to install this system - from one-command installation to manual setup - so you can get started immediately regardless of your platform or preference!
+
+> 👋 **New to this from Reddit?** Check out the [Reddit Quick Start Guide](REDDIT_QUICKSTART.md) for a super simple setup!
+
+## 🚀 Quick Installation - Choose Your Method!
+
+### ⚡ Option 1: One-Command Installation (Linux/macOS) - **FASTEST**
+```bash
+curl -sSL https://raw.githubusercontent.com/savantskie/persistent-ai-memory/main/install.sh | bash
+```
+
+### 🪟 Option 2: Windows One-Click Installation - **EASIEST**
+```cmd
+curl -sSL https://raw.githubusercontent.com/savantskie/persistent-ai-memory/main/install.bat -o install.bat && install.bat
+```
+
+### 🔧 Option 3: Manual Installation - **MOST CONTROL**
+```bash
+git clone https://github.com/savantskie/persistent-ai-memory.git
+cd persistent-ai-memory
+pip install -r requirements.txt
+pip install -e .
+```
+
+### 📦 Option 4: Direct pip Installation - **SIMPLEST**
+```bash
+pip install git+https://github.com/savantskie/persistent-ai-memory.git
+```
+
+## 🏥 Health Check
+After installation, verify everything is working:
+```bash
+python tests/test_health_check.py
+```
+
+## 🎯 Features
+
+- **Persistent Memory**: SQLite-based storage for conversations, AI memories, schedules, VS Code projects, and MCP tool calls
+- **Vector Search**: Semantic search using embeddings via LM Studio
+- **Real-time Monitoring**: File-based conversation capture with watchdog
+- **MCP Integration**: Model Context Protocol server with tool call logging and AI self-reflection
+- **Cross-platform**: Works on Windows, macOS, and Linux
+- **Zero Configuration**: Works out-of-the-box with sensible defaults
+
+## 📚 Quick Start
+
+### Basic Usage
+```python
+import asyncio
+from ai_memory_core import PersistentAIMemorySystem
+
+async def main():
+    # Initialize the memory system
+    memory = PersistentAIMemorySystem()
+    
+    # Store a memory
+    await memory.store_memory("I learned about Python async programming today")
+    
+    # Search memories
+    results = await memory.search_memories("Python programming")
+    print(f"Found {len(results)} related memories")
+    
+    # Store conversation
+    await memory.store_conversation("user", "What is async programming?")
+    await memory.store_conversation("assistant", "Async programming allows...")
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+### MCP Server (for Claude Desktop, etc.)
+```python
+# Run as MCP server
+python ai_memory_core.py
+```
+
+### File Monitoring
+```python
+# Monitor conversation files (like ChatGPT exports)
+from ai_memory_core import PersistentAIMemorySystem
+
+memory = PersistentAIMemorySystem()
+memory.start_conversation_monitoring("/path/to/conversation/files")
+```
 
 ## 🏗️ Architecture
 
-### Core Components
+The system includes 5 specialized databases:
 
-1. **`ai_memory_core.py`** - Main memory system with all database managers
-2. **`mcp_server.py`** - Model Context Protocol server providing AI tool interface
-3. **`conversation_monitor.py`** - Real-time file monitoring for conversation capture
-4. **`embedding_service.py`** - LM Studio integration for semantic embeddings
-
-### Database Structure
-
-- **`conversations.db`** - Chat messages with auto-threading and embeddings
-- **`ai_memories.db`** - Curated memories and insights with importance scoring
-- **`schedule.db`** - Appointments and reminders with due date tracking
-- **`vscode_project.db`** - Development sessions, insights, and code context
-- **`mcp_tool_calls.db`** - Tool call logging for reflection and debugging
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-```bash
-pip install aiohttp watchdog numpy sqlite3
-```
-
-### Basic Usage
-
-```python
-from ai_memory_core import PersistentAIMemorySystem
-
-# Initialize the memory system
-memory = PersistentAIMemorySystem()
-
-# Start real-time conversation monitoring
-await memory.start_file_monitoring()
-
-# Store a memory
-result = await memory.create_memory(
-    content="User prefers concise technical explanations",
-    memory_type="preference",
-    importance_level=7,
-    tags=["communication", "technical"]
-)
-
-# Search memories semantically
-results = await memory.search_memories("How should I explain technical concepts?")
-```
-
-### MCP Server
-
-```bash
-# Start the MCP server for AI assistant integration
-python mcp_server.py
-```
+1. **Conversations**: Chat history with embeddings for semantic search
+2. **AI Memories**: Long-term persistent AI memories
+3. **Schedule**: Time-based events and reminders
+4. **VS Code Projects**: Project context and file tracking
+5. **MCP Tool Calls**: Model Context Protocol interaction logging
 
 ## 🔧 Configuration
 
-The system automatically detects conversation storage locations for:
-
-- **VS Code**: `~/.config/Code/User/workspaceStorage/*/chatSessions`
-- **LM Studio**: `~/.lmstudio/conversations`
-- **Custom paths**: Add via `add_watch_directory()`
-
-## 📊 Monitoring & Health
+The system works with zero configuration but can be customized:
 
 ```python
-# Get comprehensive system health
-health = await memory.get_system_health()
-print(f"Status: {health['status']}")
-print(f"Total messages: {health['databases']['conversations']['message_count']}")
+memory = PersistentAIMemorySystem(
+    db_path="custom_memory.db",
+    embedding_service_url="http://localhost:1234/v1/embeddings"
+)
+```
+
+## 🧪 Examples
+
+Check the `examples/` directory for:
+- Basic memory operations
+- Conversation tracking
+- MCP server setup
+- Vector search demonstrations
+
+## 🧪 Testing
+
+Run the complete test suite:
+```bash
+python tests/test_health_check.py
+python tests/test_memory_operations.py
+python tests/test_conversation_tracking.py
+python tests/test_mcp_integration.py
+```
+
+## � API Reference
+
+### Core Methods
+
+#### Memory Operations
+- `store_memory(content, metadata=None)` - Store a persistent memory
+- `search_memories(query, limit=10)` - Semantic search of memories
+- `list_recent_memories(limit=10)` - Get recent memories
+
+#### Conversation Tracking
+- `store_conversation(role, content, metadata=None)` - Store conversation turn
+- `search_conversations(query, limit=10)` - Search conversation history
+- `get_conversation_history(limit=100)` - Get recent conversations
+
+#### MCP Tool Calls
+- `log_tool_call(tool_name, arguments, result, metadata=None)` - Log MCP tool usage
+- `get_tool_call_history(tool_name=None, limit=100)` - Get tool usage history
+- `reflect_on_tool_usage()` - AI self-reflection on tool patterns
+
+#### System Health
+- `get_system_health()` - Check system status and database health
+
+## 🛠️ Development
+
+### Setting up for Development
+```bash
+git clone https://github.com/savantskie/persistent-ai-memory.git
+cd persistent-ai-memory
+pip install -e ".[dev]"
+```
+
+### Running Tests
+```bash
+pytest tests/
 ```
 
 ## 🤝 Contributing
