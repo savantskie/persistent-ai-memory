@@ -625,6 +625,9 @@ class ConversationFileMonitor:
             logger.info("No watch directories specified for file monitoring")
             return
             
+        # Store reference to the current event loop
+        self.loop = asyncio.get_running_loop()
+        
         self.observer = Observer()
         
         for directory in self.watch_directories:
@@ -636,11 +639,29 @@ class ConversationFileMonitor:
                     
                     def on_modified(self, event):
                         if not event.is_directory:
-                            asyncio.create_task(self.monitor._process_file_change(event.src_path))
+                            try:
+                                # Get the event loop from the main thread
+                                loop = self.monitor.loop
+                                if loop and loop.is_running():
+                                    asyncio.run_coroutine_threadsafe(
+                                        self.monitor._process_file_change(event.src_path), 
+                                        loop
+                                    )
+                            except Exception as e:
+                                print(f"Error scheduling file change processing: {e}")
                     
                     def on_created(self, event):
                         if not event.is_directory:
-                            asyncio.create_task(self.monitor._process_file_change(event.src_path))
+                            try:
+                                # Get the event loop from the main thread
+                                loop = self.monitor.loop
+                                if loop and loop.is_running():
+                                    asyncio.run_coroutine_threadsafe(
+                                        self.monitor._process_file_change(event.src_path), 
+                                        loop
+                                    )
+                            except Exception as e:
+                                print(f"Error scheduling file change processing: {e}")
                 
                 handler = ConversationFileHandler(self)
                 self.observer.schedule(handler, directory, recursive=True)
