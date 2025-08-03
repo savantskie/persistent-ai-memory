@@ -8,9 +8,13 @@ with comprehensive tool call logging and reflection capabilities.
 
 import asyncio
 import json
+import logging
 import time
 from typing import Any, Dict, List, Optional
 from datetime import datetime
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 # Import the core memory system
 from ai_memory_core import (
@@ -74,13 +78,83 @@ class MCPToolLogger:
             }
 
 
-class PersistentAIMemoryMCPServer:
-    """MCP Server for Persistent AI Memory System with tool call logging"""
+class AutoMaintenanceMixin:
+    """Mixin to add automatic maintenance functionality to MCP server"""
+    
+    def _start_automatic_maintenance(self):
+        """Start automatic database maintenance background task"""
+        self._maintenance_task = asyncio.create_task(self._maintenance_loop())
+        logger.info("🔧 Automatic database maintenance started (3-hour intervals)")
+    
+    async def _maintenance_loop(self):
+        """Background loop for automatic database maintenance"""
+        # Wait a bit after startup before first maintenance
+        await asyncio.sleep(300)  # 5 minutes initial delay
+        
+        while True:
+            try:
+                logger.info("🧹 Running automatic database maintenance...")
+                await self._run_database_maintenance()
+                logger.info("✅ Automatic maintenance completed")
+                    
+            except Exception as e:
+                logger.error(f"❌ Automatic maintenance failed: {e}")
+            
+            # Wait 3 hours before next maintenance
+            await asyncio.sleep(3 * 60 * 60)
+    
+    async def _run_database_maintenance(self):
+        """Run database maintenance tasks"""
+        try:
+            # Import required modules
+            from pathlib import Path
+            import sqlite3
+            
+            # Optimize all databases
+            db_paths = [
+                self.memory_system.conversations_db.db_path,
+                self.memory_system.ai_memory_db.db_path,
+                self.memory_system.schedule_db.db_path,
+                self.memory_system.vscode_db.db_path,
+                self.memory_system.mcp_db.db_path
+            ]
+            
+            for db_path in db_paths:
+                if Path(db_path).exists():
+                    conn = sqlite3.connect(db_path)
+                    conn.execute("VACUUM")  # Reclaim space and defragment
+                    conn.execute("REINDEX")  # Rebuild indexes for better performance
+                    conn.execute("ANALYZE")  # Update query planner statistics
+                    conn.close()
+            
+            logger.info(f"🗄️ Optimized {len(db_paths)} databases")
+            
+        except Exception as e:
+            logger.error(f"Database maintenance error: {e}")
+            raise
+    
+    async def cleanup(self):
+        """Cleanup resources when server stops"""
+        if hasattr(self, '_maintenance_task') and self._maintenance_task and not self._maintenance_task.done():
+            self._maintenance_task.cancel()
+            try:
+                await self._maintenance_task
+            except asyncio.CancelledError:
+                pass
+            logger.info("🔧 Automatic maintenance stopped")
+
+
+class PersistentAIMemoryMCPServer(AutoMaintenanceMixin):
+    """MCP Server for Persistent AI Memory System with tool call logging and automatic maintenance"""
     
     def __init__(self):
         self.memory_system = PersistentAIMemorySystem()
-        self.tool_logger = MCPToolLogger(self.memory_system.tool_call_db)
+        self.tool_logger = MCPToolLogger(self.memory_system.mcp_db)
         self.client_sessions = {}  # Track client sessions
+        self._maintenance_task = None  # Background maintenance task
+        
+        # Start automatic maintenance
+        self._start_automatic_maintenance()
     
     async def handle_mcp_request(self, request: Dict, client_id: str = None) -> Dict:
         """Handle incoming MCP requests with tool call logging"""
@@ -384,8 +458,9 @@ async def main():
     await server.memory_system.start_file_monitoring()
     
     print("🧠 Persistent AI Memory System - MCP Server Started")
-    print("🔧 Tool call logging and reflection enabled")
-    print("📁 File monitoring active")
+    print("🔧 Tool call logging and reflection enabled") 
+    print("� Automatic database maintenance enabled (3-hour intervals)")
+    print("�📁 File monitoring active")
     print("🌐 Ready for MCP client connections")
     
     # Keep the server running
@@ -395,6 +470,7 @@ async def main():
     except KeyboardInterrupt:
         print("\n🛑 Shutting down MCP server...")
         await server.memory_system.stop_file_monitoring()
+        await server.cleanup()  # Clean up maintenance task
 
 
 if __name__ == "__main__":
