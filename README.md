@@ -46,6 +46,7 @@ python tests/test_health_check.py
 - **Vector Search**: Semantic search using embeddings via LM Studio
 - **Real-time Monitoring**: File-based conversation capture with watchdog
 - **MCP Integration**: Model Context Protocol server with tool call logging and AI self-reflection
+- **Multi-Platform Support**: Works with LM Studio, VS Code, Koboldcpp, Ollama, and more
 - **Cross-platform**: Works on Windows, macOS, and Linux
 - **Zero Configuration**: Works out-of-the-box with sensible defaults
 
@@ -118,6 +119,19 @@ Check the `examples/` directory for:
 - Conversation tracking
 - MCP server setup
 - Vector search demonstrations
+
+## 🔌 Platform Integration Guides
+
+### AI Platforms
+- **[Koboldcpp Integration](KOBOLDCPP_INTEGRATION.md)** - Complete setup guide for Koboldcpp compatibility
+- **LM Studio** - Built-in support for embeddings and conversation capture
+- **VS Code** - MCP server integration for development workflows
+- **Ollama** - Compatible through file monitoring and HTTP API approaches
+
+### Integration Methods
+- **File Monitoring** - Automatic conversation capture from chat logs
+- **HTTP API** - Real-time memory access via REST endpoints  
+- **MCP Protocol** - Standardized tool interface for compatible platforms
 
 ## 🧪 Testing
 
