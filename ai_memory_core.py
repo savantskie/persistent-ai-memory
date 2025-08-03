@@ -933,45 +933,72 @@ class ConversationFileMonitor:
             return str(hash(file_path))
     
     async def _extract_conversations(self, file_path: str) -> List[Dict]:
-        """Extract conversations from various file formats with timestamps"""
+        """Extract conversations from various file formats with timestamps, using registry-based extensibility and robust deduplication"""
         conversations = []
-        
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
-                
-            # Get file modification time as fallback timestamp
+
             fallback_time = datetime.fromtimestamp(
-                os.path.getmtime(file_path), 
+                os.path.getmtime(file_path),
                 timezone.utc
             ).isoformat()
-            
-            # Handle JSON format (ChatGPT exports, etc.)
-            if file_path.endswith('.json'):
-                try:
-                    data = json.loads(content)
-                    # Handle different JSON conversation formats
-                    if 'mapping' in data:  # ChatGPT format
-                        conversations.extend(self._parse_chatgpt_format(data))
-                    elif 'messages' in data:  # Claude format
-                        conversations.extend(self._parse_claude_format(data))
-                    elif isinstance(data, list):  # Simple conversation array
-                        conversations.extend(self._parse_simple_array(data))
-                except json.JSONDecodeError:
-                    pass
-            
-            # Handle text formats
-            elif file_path.endswith(('.txt', '.md', '.log')):
-                conversations.extend(self._parse_text_format(content))
-            
+
+            # Registry of format handlers: (predicate, handler)
+            format_handlers = [
+                (lambda fn, _: fn.endswith('.json'), self._handle_json_formats),
+                (lambda fn, _: fn.endswith(('.txt', '.md', '.log')), self._parse_text_format),
+            ]
+
+            handled = False
+            for predicate, handler in format_handlers:
+                if predicate(file_path, content):
+                    if handler == self._handle_json_formats:
+                        conversations.extend(handler(content))
+                    else:
+                        conversations.extend(handler(content))
+                    handled = True
+                    break
+
+            if not handled:
+                logger.warning(f"No format handler found for {file_path}")
+
             # Ensure all conversations have timestamps
             for conv in conversations:
-                if 'timestamp' not in conv:
+                if 'timestamp' not in conv or not conv['timestamp']:
                     conv['timestamp'] = fallback_time
-        
+
+            # Robust deduplication: by id (if present), timestamp (if present), and content hash
+            seen = set()
+            deduped = []
+            for conv in conversations:
+                # Use id if present, else None
+                cid = conv.get('id') or conv.get('message_id') or None
+                ts = conv.get('timestamp') or None
+                content_hash = hashlib.md5(conv.get('content', '').encode('utf-8')).hexdigest()
+                dedup_key = (cid, ts, content_hash)
+                if dedup_key not in seen:
+                    seen.add(dedup_key)
+                    deduped.append(conv)
+            return deduped
         except Exception as e:
             logger.error(f"Error extracting conversations from {file_path}: {e}")
-        
+            return []
+
+    def _handle_json_formats(self, content: str) -> List[Dict]:
+        """Handle all supported JSON conversation formats (add new ones here)"""
+        conversations = []
+        try:
+            data = json.loads(content)
+            if isinstance(data, dict):
+                if 'mapping' in data:
+                    conversations.extend(self._parse_chatgpt_format(data))
+                elif 'messages' in data:
+                    conversations.extend(self._parse_claude_format(data))
+            elif isinstance(data, list):
+                conversations.extend(self._parse_simple_array(data))
+        except Exception as e:
+            logger.error(f"Error handling JSON formats: {e}")
         return conversations
     
     def _parse_chatgpt_format(self, data: Dict) -> List[Dict]:
