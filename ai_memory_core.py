@@ -724,10 +724,11 @@ class ConversationFileMonitor:
             
             # Store conversations in database
             for conv in conversations:
-                await self.memory_system.store_conversation(
+                await self.memory_system.store_conversation_message(
                     content=conv['content'],
                     role=conv['role'],
-                    metadata={'source_file': file_path, 'imported_at': datetime.now(timezone.utc).isoformat()}
+                    metadata={'source_file': file_path, 'imported_at': datetime.now(timezone.utc).isoformat()},
+                    session_id=self._get_file_hash(file_path)  # Use file hash as session ID for grouping
                 )
             
             logger.info(f"Imported {len(conversations)} conversations from {file_path}")
