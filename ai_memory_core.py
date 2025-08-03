@@ -705,6 +705,11 @@ class VSCodeProjectDatabase(DatabaseManager):
 
 
 class ConversationFileMonitor:
+    def __init__(self, memory_system, watch_directories):
+        self.memory_system = memory_system
+        self.watch_directories = watch_directories
+        self.vscode_db = memory_system.vscode_db
+        
     def _parse_character_ai_format(self, data: Dict) -> List[Dict]:
         """Parse Character.ai conversation format (list of messages under 'conversation')"""
         conversations = []
