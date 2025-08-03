@@ -636,6 +636,37 @@ class VSCodeProjectDatabase(DatabaseManager):
 
 
 class ConversationFileMonitor:
+    def _parse_character_ai_format(self, data: Dict) -> List[Dict]:
+        """Parse Character.ai conversation format (list of messages under 'conversation')"""
+        conversations = []
+        try:
+            messages = data.get('conversation', [])
+            for msg in messages:
+                if isinstance(msg, dict) and 'content' in msg:
+                    conversations.append({
+                        'role': msg.get('character', msg.get('role', 'unknown')),
+                        'content': msg['content'],
+                        'timestamp': msg.get('timestamp')
+                    })
+        except Exception as e:
+            logger.error(f"Error parsing Character.ai format: {e}")
+        return conversations
+
+    def _parse_text_gen_format(self, data: Dict) -> List[Dict]:
+        """Parse text-generation-webui format (list of messages under 'history')"""
+        conversations = []
+        try:
+            history = data.get('history', [])
+            for msg in history:
+                if isinstance(msg, dict) and 'content' in msg:
+                    conversations.append({
+                        'role': msg.get('role', 'unknown'),
+                        'content': msg['content'],
+                        'timestamp': msg.get('timestamp')
+                    })
+        except Exception as e:
+            logger.error(f"Error parsing text-generation-webui format: {e}")
+        return conversations
     """Monitors files for conversation changes and auto-imports them.
     
     Features:
