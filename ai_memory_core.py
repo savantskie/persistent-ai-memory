@@ -2,17 +2,51 @@
 """
 Persistent AI Memory System - Core Module
 
-A comprehensive memory system for AI assistants with real-time conversation capture,
-semantic search, and multi-database architecture.
+A comprehensive memory system designed for long-term persistence, semantic search,
+and AI assistant augmentation. This standalone version includes all core functionality
+from the Friday Memory System with enhanced features for broader use.
 
-Features:
-- 5 specialized databases (conversations, AI memories, schedule, VS Code projects, MCP tool calls)
-- Vector semantic search with embeddings
-- Real-time conversation file monitoring
-- AI self-reflection and tool usage analysis
-- Appointment and reminder scheduling
-- VS Code project context tracking
-- Comprehensive system health monitoring
+Key Features:
+- Specialized Database Architecture:
+  * Conversations with automatic session management
+  * AI-curated memories with importance levels and tags
+  * Appointment and reminder scheduling
+  * VS Code project context and development tracking
+  * MCP tool call logging with AI self-reflection
+
+- Advanced Search and Retrieval:
+  * Vector-based semantic search across all databases
+  * Project-specific search capabilities
+  * Code context linking and retrieval
+  * Importance-weighted memory search
+  * Fallback text-based search when embeddings unavailable
+
+- Enhanced AI Capabilities:
+  * Automatic embedding generation
+  * Usage pattern detection and analysis
+  * AI self-reflection on tool usage
+  * Pattern-based recommendations
+  * Confidence scoring for insights
+
+- Real-time Monitoring:
+  * Conversation file monitoring
+  * Multiple chat source support (VS Code, LM Studio, ChatGPT, etc.)
+  * Deduplication across sources
+  * MCP server integration
+  
+- System Management:
+  * Comprehensive health monitoring
+  * Automated database maintenance
+  * Error tracking and logging
+  * Performance optimization
+
+- Development Tools:
+  * Project continuity tracking
+  * Code context management
+  * Development session history
+  * Insight storage and retrieval
+
+For usage examples and integration guides, see the documentation in /docs.
 """
 
 import sqlite3
@@ -33,9 +67,11 @@ from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging with minimal output
+logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
+# Only show important messages and errors
+logger.setLevel(logging.WARNING)
 
 
 class DatabaseManager:
@@ -65,9 +101,51 @@ class DatabaseManager:
     async def execute_update(self, query: str, params: Tuple = ()) -> str:
         """Execute an INSERT/UPDATE/DELETE query and return last row ID"""
         with self.get_connection() as conn:
-            cursor = conn.execute(query, params)
-            conn.commit()
-            return str(cursor.lastrowid)
+            try:
+                cursor = conn.execute(query, params)
+                conn.commit()
+                return str(cursor.lastrowid)
+            except sqlite3.Error as e:
+                logger.error(f"Database error: {e}")
+                logger.error(f"Query: {query}")
+                logger.error(f"Params: {params}")
+                raise
+                
+    def parse_timestamp(timestamp: Union[str, int, float, None], fallback: Optional[datetime] = None) -> str:
+        """Parse various timestamp formats into ISO format string.
+        
+        Args:
+            timestamp: Input timestamp (string, unix timestamp, or None)
+            fallback: Optional fallback datetime if parsing fails
+            
+        Returns:
+            ISO format datetime string
+        """
+        if not timestamp:
+            return (fallback or datetime.now(timezone.utc)).isoformat()
+            
+        try:
+            if isinstance(timestamp, (int, float)):
+                # Unix timestamp
+                dt = datetime.fromtimestamp(timestamp, timezone.utc)
+            elif isinstance(timestamp, str):
+                # Try various string formats
+                try:
+                    dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                except ValueError:
+                    # Try parsing with dateutil as fallback
+                    from dateutil import parser
+                    dt = parser.parse(timestamp)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+            else:
+                raise ValueError(f"Unsupported timestamp format: {type(timestamp)}")
+                
+            return dt.isoformat()
+            
+        except Exception as e:
+            logger.warning(f"Error parsing timestamp {timestamp}: {e}")
+            return (fallback or datetime.now(timezone.utc)).isoformat()
 
 
 class MCPToolCallDatabase(DatabaseManager):
@@ -108,6 +186,35 @@ class MCPToolCallDatabase(DatabaseManager):
                     avg_execution_time_ms REAL DEFAULT 0,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(tool_name, date)
+                )
+            """)
+            
+            # AI reflections table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS ai_reflections (
+                    reflection_id TEXT PRIMARY KEY,
+                    timestamp TEXT NOT NULL,
+                    reflection_type TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    insights TEXT,
+                    recommendations TEXT,
+                    confidence_level REAL DEFAULT 0.5,
+                    source_period_days INTEGER,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Usage patterns table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS usage_patterns (
+                    pattern_id TEXT PRIMARY KEY,
+                    timestamp TEXT NOT NULL,
+                    pattern_type TEXT NOT NULL,
+                    insight TEXT NOT NULL,
+                    analysis_period_days INTEGER NOT NULL,
+                    confidence_score REAL DEFAULT 0.5,
+                    supporting_data TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )
             """)
             
@@ -232,6 +339,92 @@ class MCPToolCallDatabase(DatabaseManager):
                       LIMIT ?"""
             params = (limit,)
         
+        rows = await self.execute_query(query, params)
+        return [dict(row) for row in rows]
+        
+    async def store_ai_reflection(self, reflection_type: str, content: str,
+                                insights: List[str] = None, recommendations: List[str] = None,
+                                confidence_level: float = 0.5, source_period_days: int = None) -> str:
+        """Store AI self-reflection on tool usage and patterns.
+        
+        Args:
+            reflection_type: Type of reflection (e.g., usage_patterns, performance, suggestions)
+            content: Main reflection content
+            insights: List of specific insights gained
+            recommendations: List of action recommendations
+            confidence_level: Confidence in the reflection (0-1)
+            source_period_days: Period of data analyzed
+            
+        Returns:
+            str: Reflection ID
+        """
+        reflection_id = str(uuid.uuid4())
+        timestamp = datetime.now(timezone.utc).isoformat()
+        
+        await self.execute_update(
+            """INSERT INTO ai_reflections 
+               (reflection_id, timestamp, reflection_type, content, insights, 
+                recommendations, confidence_level, source_period_days)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (reflection_id, timestamp, reflection_type, content,
+             json.dumps(insights) if insights else None,
+             json.dumps(recommendations) if recommendations else None,
+             confidence_level, source_period_days)
+        )
+        
+        return reflection_id
+        
+    async def store_usage_pattern(self, pattern_type: str, insight: str, 
+                                analysis_period_days: int, confidence_score: float = 0.5,
+                                supporting_data: Dict = None) -> str:
+        """Store identified usage pattern from AI analysis.
+        
+        Args:
+            pattern_type: Type of usage pattern
+            insight: Description of the pattern
+            analysis_period_days: Period analyzed to identify pattern
+            confidence_score: Confidence in pattern (0-1)
+            supporting_data: Additional data supporting the pattern
+            
+        Returns:
+            str: Pattern ID
+        """
+        pattern_id = str(uuid.uuid4())
+        timestamp = datetime.now(timezone.utc).isoformat()
+        
+        await self.execute_update(
+            """INSERT INTO usage_patterns
+               (pattern_id, timestamp, pattern_type, insight, analysis_period_days,
+                confidence_score, supporting_data)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (pattern_id, timestamp, pattern_type, insight, analysis_period_days,
+             confidence_score, json.dumps(supporting_data) if supporting_data else None)
+        )
+        
+        return pattern_id
+        
+    async def get_recent_reflections(self, limit: int = 5, reflection_type: str = None) -> List[Dict]:
+        """Get recent AI reflections, optionally filtered by type.
+        
+        Args:
+            limit: Maximum number of reflections to return
+            reflection_type: Optional filter by reflection type
+            
+        Returns:
+            List of reflection entries
+        """
+        if reflection_type:
+            query = """SELECT * FROM ai_reflections
+                      WHERE reflection_type = ?
+                      ORDER BY timestamp DESC
+                      LIMIT ?"""
+            params = (reflection_type, limit)
+        else:
+            query = """SELECT * FROM ai_reflections
+                      ORDER BY timestamp DESC
+                      LIMIT ?"""
+            params = (limit,)
+            
         rows = await self.execute_query(query, params)
         return [dict(row) for row in rows]
 
@@ -412,11 +605,69 @@ class ConversationDatabase(DatabaseManager):
 
 
 class AIMemoryDatabase(DatabaseManager):
-    """Manages AI-curated memories database"""
+    """Manages AI-curated memories database with enhanced operations"""
     
     def __init__(self, db_path: str = "ai_memories.db"):
         super().__init__(db_path)
         self.initialize_tables()
+        
+    async def run_maintenance(self, force: bool = False) -> Dict:
+        """Run database maintenance tasks.
+        
+        Args:
+            force: Whether to force maintenance even if recent
+            
+        Returns:
+            Dict containing maintenance results
+        """
+        try:
+            # Check last maintenance
+            last_maintenance = await self.execute_query(
+                "SELECT value FROM metadata WHERE key = 'last_maintenance'"
+            )
+            
+            if not force and last_maintenance:
+                last_time = datetime.fromisoformat(last_maintenance[0]["value"])
+                if datetime.now(timezone.utc) - last_time < timedelta(days=7):
+                    return {
+                        "status": "skipped",
+                        "message": "Maintenance ran recently",
+                        "last_run": last_time.isoformat()
+                    }
+            
+            with self.get_connection() as conn:
+                # Optimize indexes
+                conn.execute("ANALYZE")
+                
+                # Clean up any orphaned records
+                conn.execute("""
+                    DELETE FROM curated_memories 
+                    WHERE source_conversation_id NOT IN (
+                        SELECT conversation_id FROM conversations
+                    ) AND source_conversation_id IS NOT NULL
+                """)
+                
+                # Update metadata
+                conn.execute(
+                    "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                    ("last_maintenance", datetime.now(timezone.utc).isoformat())
+                )
+                
+                conn.commit()
+                
+            return {
+                "status": "success",
+                "message": "Maintenance completed successfully",
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"Maintenance error: {e}")
+            return {
+                "status": "error",
+                "message": str(e),
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
     
     def initialize_tables(self):
         """Create tables if they don't exist"""
@@ -1542,6 +1793,143 @@ class PersistentAIMemorySystem:
     # ADVANCED SEARCH OPERATIONS
     # =============================================================================
     
+    async def search_project_history(self, query: str, limit: int = 10) -> Dict:
+        """Search project development history including conversations and insights.
+        
+        Args:
+            query: Search query string
+            limit: Maximum number of results
+            
+        Returns:
+            Dict containing search results from project context
+        """
+        query_embedding = await self.embedding_service.generate_embedding(query)
+        if not query_embedding:
+            return await self._text_based_project_search(query, limit)
+            
+        results = []
+        
+        # Search development conversations
+        conv_results = await self._search_development_conversations(query_embedding, limit)
+        results.extend(conv_results)
+        
+        # Search project insights
+        insight_results = await self._search_project_insights(query_embedding, limit)
+        results.extend(insight_results)
+        
+        # Search code context
+        context_results = await self._search_code_context(query_embedding, limit)
+        results.extend(context_results)
+        
+        # Sort by relevance and return
+        results.sort(key=lambda x: x["similarity_score"], reverse=True)
+        return {
+            "status": "success",
+            "query": query,
+            "results": results[:limit],
+            "count": len(results[:limit])
+        }
+        
+    async def link_code_context(self, file_path: str, description: str,
+                              function_name: str = None, conversation_id: str = None) -> Dict:
+        """Link conversation context to specific code location.
+        
+        Args:
+            file_path: Path to the code file
+            description: Description of the code context
+            function_name: Optional function/method name
+            conversation_id: Optional related conversation ID
+            
+        Returns:
+            Dict containing the created context link
+        """
+        context_id = str(uuid.uuid4())
+        timestamp = datetime.now(timezone.utc).isoformat()
+        
+        await self.vscode_db.execute_update(
+            """INSERT INTO code_context 
+               (context_id, timestamp, file_path, function_name, description)
+               VALUES (?, ?, ?, ?, ?)""",
+            (context_id, timestamp, file_path, function_name, description)
+        )
+        
+        if conversation_id:
+            await self.vscode_db.execute_update(
+                """UPDATE development_conversations
+                   SET chat_context_id = ?
+                   WHERE conversation_id = ?""",
+                (context_id, conversation_id)
+            )
+            
+        # Generate embedding for search
+        asyncio.create_task(self._add_embedding_to_code_context(context_id, description))
+        
+        return {
+            "status": "success",
+            "context_id": context_id
+        }
+        
+    async def get_project_continuity(self, workspace_path: str = None, limit: int = 5) -> Dict:
+        """Get context for continuing development work.
+        
+        Args:
+            workspace_path: Optional workspace path filter
+            limit: Maximum number of context items
+            
+        Returns:
+            Dict containing recent development context
+        """
+        # Get recent development sessions
+        sessions_query = """
+            SELECT * FROM project_sessions
+            WHERE end_timestamp IS NULL
+        """
+        if workspace_path:
+            sessions_query += " AND workspace_path = ?"
+            sessions = await self.vscode_db.execute_query(
+                sessions_query + " ORDER BY start_timestamp DESC LIMIT ?",
+                (workspace_path, limit)
+            )
+        else:
+            sessions = await self.vscode_db.execute_query(
+                sessions_query + " ORDER BY start_timestamp DESC LIMIT ?",
+                (limit,)
+            )
+            
+        # Get associated conversations and insights
+        context = {
+            "active_sessions": [dict(session) for session in sessions],
+            "recent_conversations": [],
+            "relevant_insights": []
+        }
+        
+        for session in sessions:
+            # Get conversations for this session
+            convs = await self.vscode_db.execute_query(
+                """SELECT * FROM development_conversations
+                   WHERE session_id = ?
+                   ORDER BY timestamp DESC LIMIT ?""",
+                (session["session_id"], limit)
+            )
+            context["recent_conversations"].extend([dict(conv) for conv in convs])
+            
+            # Get insights mentioning active files
+            if session["active_files"]:
+                active_files = json.loads(session["active_files"])
+                for file in active_files:
+                    insights = await self.vscode_db.execute_query(
+                        """SELECT * FROM project_insights
+                           WHERE related_files LIKE ?
+                           ORDER BY timestamp_created DESC LIMIT ?""",
+                        (f"%{file}%", limit)
+                    )
+                    context["relevant_insights"].extend([dict(insight) for insight in insights])
+        
+        return {
+            "status": "success",
+            "context": context
+        }
+            
     async def search_memories(self, query: str, limit: int = 10, 
                             min_importance: int = None, max_importance: int = None,
                             memory_type: str = None, database_filter: str = "all") -> Dict:
@@ -2019,6 +2407,53 @@ class PersistentAIMemorySystem:
             "search_type": "text_based",
             "note": "Used text-based search (embeddings unavailable)"
         }
+    
+    # System maintenance
+    async def run_database_maintenance(self, force: bool = False) -> Dict:
+        """Run maintenance on all databases.
+        
+        This includes:
+        - Optimizing indexes
+        - Cleaning up orphaned records
+        - Updating statistics
+        - Validating data consistency
+        
+        Args:
+            force: Whether to force maintenance even if recent
+            
+        Returns:
+            Dict containing maintenance results
+        """
+        results = {
+            "status": "success",
+            "databases": {},
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        
+        try:
+            # Run maintenance on each database
+            results["databases"]["ai_memories"] = await self.ai_memory_db.run_maintenance(force)
+            results["databases"]["conversations"] = await self.conversations_db.run_maintenance(force)
+            results["databases"]["schedule"] = await self.schedule_db.run_maintenance(force)
+            results["databases"]["vscode"] = await self.vscode_db.run_maintenance(force)
+            results["databases"]["mcp"] = await self.mcp_db.run_maintenance(force)
+            
+            # Check for failed maintenance
+            failed = [db for db, result in results["databases"].items() 
+                     if result["status"] == "error"]
+            
+            if failed:
+                results["status"] = "partial"
+                results["message"] = f"Maintenance failed for: {', '.join(failed)}"
+            else:
+                results["message"] = "All maintenance tasks completed successfully"
+                
+        except Exception as e:
+            results["status"] = "error"
+            results["message"] = str(e)
+            logger.error(f"System maintenance error: {e}")
+            
+        return results
     
     # Embedding helper methods (async background tasks)
     async def _add_embedding_to_message(self, message_id: str, content: str):
