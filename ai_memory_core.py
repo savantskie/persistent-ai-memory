@@ -709,6 +709,8 @@ class ConversationFileMonitor:
         self.memory_system = memory_system
         self.watch_directories = watch_directories
         self.vscode_db = memory_system.vscode_db
+        self.conversations_db = memory_system.conversations_db  # Add this to maintain compatibility
+        self.curated_db = memory_system.curated_db  # Add this to maintain compatibility
         
     def _parse_character_ai_format(self, data: Dict) -> List[Dict]:
         """Parse Character.ai conversation format (list of messages under 'conversation')"""
