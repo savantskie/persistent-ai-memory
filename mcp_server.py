@@ -166,6 +166,16 @@ class AIMemoryMCPServer:
                 }
             ),
             Tool(
+                name="get_reminders",
+                description="Get up to 5 active (uncompleted) reminders, sorted by due date.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "description": "Number of reminders to return", "default": 5}
+                    }
+                }
+            ),
+            Tool(
                 name="get_recent_context",
                 description="Get recent conversation context",
                 inputSchema={
@@ -384,6 +394,10 @@ class AIMemoryMCPServer:
                 result = await self.memory_system.create_appointment(**arguments)
             elif tool_name == "create_reminder":
                 result = await self.memory_system.create_reminder(**arguments)
+            elif tool_name == "get_reminders":
+                limit = arguments.get("limit", 5)
+                reminders = await self.memory_system.get_active_reminders()
+                result = reminders[:limit] if reminders else []
             elif tool_name == "get_recent_context":
                 result = await self.memory_system.get_recent_context(**arguments)
             elif tool_name == "get_system_health":
