@@ -10,16 +10,29 @@ import asyncio
 import json
 import logging
 import time
+import jsonschema
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 
 # Configure logging
 logger = logging.getLogger(__name__)
 
+# MCP imports
+from mcp.server import Server, NotificationOptions
+from mcp.server.models import InitializationOptions
+from mcp.server.stdio import stdio_server
+from mcp.types import (
+    CallToolRequestParams,
+    CallToolResult,
+    TextContent,
+    Tool,
+)
+
 # Import the core memory system
 from ai_memory_core import (
     PersistentAIMemorySystem, 
-    MCPToolCallDatabase
+    MCPToolCallDatabase,
+    FileMonitor
 )
 
 class MCPToolLogger:
@@ -50,12 +63,18 @@ class MCPToolLogger:
                 client_id=client_id
             )
             
-            return {
-                "status": "success",
-                "result": result,
-                "call_id": call_id,
-                "execution_time_ms": execution_time_ms
-            }
+            # Format response for MCP clients
+            if isinstance(result, dict) and "status" in result:
+                # Result already formatted
+                return result
+            else:
+                # Standard response format
+                return {
+                    "status": "success",
+                    "result": result,
+                    "call_id": call_id,
+                    "execution_time_ms": execution_time_ms
+                }
             
         except Exception as e:
             execution_time_ms = (time.time() - start_time) * 1000
@@ -106,28 +125,16 @@ class AutoMaintenanceMixin:
     async def _run_database_maintenance(self):
         """Run database maintenance tasks"""
         try:
-            # Import required modules
-            from pathlib import Path
-            import sqlite3
+            # Run maintenance through memory system which uses database_maintenance.py
+            result = await self.memory_system.run_database_maintenance()
             
-            # Optimize all databases
-            db_paths = [
-                self.memory_system.conversations_db.db_path,
-                self.memory_system.ai_memory_db.db_path,
-                self.memory_system.schedule_db.db_path,
-                self.memory_system.vscode_db.db_path,
-                self.memory_system.mcp_db.db_path
-            ]
-            
-            for db_path in db_paths:
-                if Path(db_path).exists():
-                    conn = sqlite3.connect(db_path)
-                    conn.execute("VACUUM")  # Reclaim space and defragment
-                    conn.execute("REINDEX")  # Rebuild indexes for better performance
-                    conn.execute("ANALYZE")  # Update query planner statistics
-                    conn.close()
-            
-            logger.info(f"🗄️ Optimized {len(db_paths)} databases")
+            # Log maintenance results
+            if result.get("success"):
+                logger.info(f"✅ Maintenance completed: {len(result.get('optimization_results', {}))} databases optimized")
+            else:
+                logger.warning(f"⚠️ Maintenance issues: {result.get('error', 'Unknown error')}")
+                
+            return result
             
         except Exception as e:
             logger.error(f"Database maintenance error: {e}")
@@ -142,6 +149,10 @@ class AutoMaintenanceMixin:
             except asyncio.CancelledError:
                 pass
             logger.info("🔧 Automatic maintenance stopped")
+        
+        if self.file_monitor:
+            await self.file_monitor.stop()
+            logger.info("📁 File monitoring stopped")
 
 
 class PersistentAIMemoryMCPServer(AutoMaintenanceMixin):
@@ -149,48 +160,171 @@ class PersistentAIMemoryMCPServer(AutoMaintenanceMixin):
     
     def __init__(self):
         self.memory_system = PersistentAIMemorySystem()
+        self.server = Server("friday-memory")
         self.tool_logger = MCPToolLogger(self.memory_system.mcp_db)
-        self.client_sessions = {}  # Track client sessions
+        self.client_context = {}  # Track client-specific context
         self._maintenance_task = None  # Background maintenance task
+        self.file_monitor = None  # File monitoring task
+        
+        # Register MCP handlers
+        self._register_handlers()
         
         # Start automatic maintenance
         self._start_automatic_maintenance()
+        
+        # Start file monitoring
+        self.file_monitor = FileMonitor(self.memory_system)
+        
+    def _validate_parameters(self, parameters: Dict, schema: Dict) -> None:
+        """Validate parameters against the tool's JSON schema"""
+        try:
+            jsonschema.validate(parameters, schema)
+        except jsonschema.exceptions.ValidationError as e:
+            raise ValueError(f"Parameter validation failed: {e.message}")
+    
+    def _create_error_response(self, message: str, code: str = None) -> Dict:
+        """Create a standardized error response"""
+        content = {
+            "type": "text",
+            "text": f"Error: {message}",
+            "highlights": None,
+            "meta": {"error_code": code} if code else None
+        }
+        
+        return {
+            "content": [content],
+            "success": False,
+            "structuredContent": None,
+            "isError": True,
+            "meta": {"error_code": code} if code else None
+        }
+    
+    def _create_success_response(self, result: Any) -> Dict:
+        """Create a standardized success response"""
+        # Format the result as text content
+        if isinstance(result, (dict, list)):
+            result_text = json.dumps(result, indent=2, default=str)
+        else:
+            result_text = str(result)
+            
+        content = {
+            "type": "text",
+            "text": result_text,
+            "highlights": None,
+            "meta": None
+        }
+        
+        return {
+            "content": [content],
+            "success": True,
+            "structuredContent": None,
+            "isError": False,
+            "meta": None
+        }
+    
+    def _register_handlers(self):
+        """Register MCP server handlers"""
+        
+        @self.server.list_tools()
+        async def handle_list_tools() -> List[Tool]:
+            """List available tools"""
+            # Convert MCP_TOOLS to list of Tool objects
+            tools = []
+            for name, info in MCP_TOOLS.items():
+                tools.append(Tool(
+                    name=name,
+                    description=info["description"],
+                    inputSchema=info["parameters"]
+                ))
+            return tools
+        
+        @self.server.call_tool()
+        async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> CallToolResult:
+            """Execute tool with proper response formatting"""
+            response = await self.handle_mcp_request({"tool": name, "parameters": arguments})
+            
+            # Convert response to CallToolResult format
+            if response.get("isError"):
+                return CallToolResult(
+                    content=[TextContent(**content) for content in response["content"]],
+                    success=False,
+                    structuredContent=None,
+                    isError=True,
+                    meta=response.get("meta")
+                )
+            else:
+                return CallToolResult(
+                    content=[TextContent(**content) for content in response["content"]],
+                    success=True,
+                    structuredContent=None,
+                    isError=False,
+                    meta=response.get("meta")
+                )
     
     async def handle_mcp_request(self, request: Dict, client_id: str = None) -> Dict:
         """Handle incoming MCP requests with tool call logging"""
         
-        tool_name = request.get("tool")
-        parameters = request.get("parameters", {})
-        
-        if not tool_name:
-            return {"status": "error", "error": "No tool specified"}
-        
-        # Map tool names to functions
-        tool_functions = {
-            # Memory operations
-            "store_memory": self._store_memory,
-            "search_memories": self._search_memories,
-            "update_memory": self._update_memory,
-            "get_recent_conversations": self._get_recent_conversations,
+        try:
+            tool_name = request.get("tool")
+            parameters = request.get("parameters", {})
             
-            # Schedule operations  
-            "create_appointment": self._create_appointment,
-            "create_reminder": self._create_reminder,
-            "get_schedule": self._get_schedule,
+            if not tool_name:
+                return self._create_error_response("No tool specified", "TOOL_MISSING")
+                
+            # Validate tool parameters against schema if defined
+            tool_schema = MCP_TOOLS.get(tool_name, {}).get("parameters")
+            if tool_schema:
+                try:
+                    self._validate_parameters(parameters, tool_schema)
+                except ValueError as e:
+                    return self._create_error_response(f"Invalid parameters: {str(e)}", "INVALID_PARAMS")
+                    
+            # Execute the tool with logging
+            # Map tool names to functions  
+            tool_functions = {
+                # Memory operations
+                "store_memory": self.memory_system.create_memory,
+                "search_memories": self.memory_system.search_memories,
+                "store_conversation": self.memory_system.store_conversation,
+                "update_memory": self.memory_system.update_memory,
+                "get_recent_context": self.memory_system.get_recent_context,
+                
+                # Schedule operations  
+                "create_appointment": self.memory_system.create_appointment,
+                "create_reminder": self.memory_system.create_reminder,
+                "get_schedule": self.memory_system.get_upcoming_schedule,
+                
+                # Project development operations
+                "save_development_session": self.memory_system.save_development_session,
+                "store_project_insight": self.memory_system.store_project_insight,
+                "search_project_history": self.memory_system.search_project_history,
+                "link_code_context": self.memory_system.link_code_context,
+                "get_project_continuity": self.memory_system.get_project_continuity,
+                
+                # System and reflection operations
+                "get_system_health": self.memory_system.get_system_health,
+                "get_tool_usage_summary": self.memory_system.get_tool_usage_summary,
+                "reflect_on_tool_usage": self.memory_system.reflect_on_tool_usage,
+                "get_ai_insights": self.memory_system.get_ai_insights
+            }
             
-            # VS Code project operations
-            "store_project_insight": self._store_project_insight,
-            "link_code_context": self._link_code_context,
-            "search_project_history": self._search_project_history,
+            tool_function = tool_functions.get(tool_name)
+            if not tool_function:
+                return self._create_error_response(f"Unknown tool: {tool_name}", "UNKNOWN_TOOL")
             
-            # System operations
-            "get_system_health": self._get_system_health,
-            
-            # 🔧 NEW: Tool reflection and logging operations
-            "get_tool_usage_summary": self._get_tool_usage_summary,
-            "get_tool_call_history": self._get_tool_call_history,
-            "reflect_on_tool_usage": self._reflect_on_tool_usage,
-        }
+            # Execute tool with logging
+            try:
+                result = await self.tool_logger.log_and_execute_tool(
+                    tool_name, parameters, tool_function, client_id
+                )
+                return self._create_success_response(result)
+            except Exception as e:
+                logger.error(f"Tool execution error: {str(e)}")
+                return self._create_error_response(str(e), "TOOL_EXEC_ERROR")
+                
+        except Exception as e:
+            logger.error(f"Request handling error: {str(e)}")
+            return self._create_error_response(f"Internal server error: {str(e)}", "SERVER_ERROR")
         
         tool_function = tool_functions.get(tool_name)
         if not tool_function:
@@ -395,57 +529,212 @@ class PersistentAIMemoryMCPServer(AutoMaintenanceMixin):
 
 # Tool definitions for MCP clients
 MCP_TOOLS = {
-    "store_memory": {
-        "description": "Store a curated memory for future reference",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "content": {"type": "string", "description": "The memory content to store"},
-                "memory_type": {"type": "string", "description": "Type of memory (preference, fact, insight, etc.)"},
-                "importance_level": {"type": "integer", "minimum": 1, "maximum": 10, "description": "Importance level (1-10)"},
-                "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags for categorization"},
-                "source_conversation_id": {"type": "string", "description": "ID of source conversation"}
-            },
-            "required": ["content"]
-        }
-    },
-    
+    # Memory operations
     "search_memories": {
-        "description": "Search stored memories using semantic similarity",
+        "description": "Search memories using semantic similarity with importance and type filtering",
         "parameters": {
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "Search query"},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Maximum results to return"},
+                "limit": {"type": "integer", "description": "Max results", "default": 10},
+                "database_filter": {"type": "string", "description": "Filter by database type", "enum": ["conversations", "ai_memories", "schedule", "all"], "default": "all"},
+                "min_importance": {"type": "integer", "minimum": 1, "maximum": 10, "description": "Minimum importance level to include (1-10)"},
+                "max_importance": {"type": "integer", "minimum": 1, "maximum": 10, "description": "Maximum importance level to include (1-10)"},
                 "memory_type": {"type": "string", "description": "Filter by memory type"}
             },
             "required": ["query"]
         }
     },
-    
-    "get_tool_usage_summary": {
-        "description": "🔧 NEW: Get summary of AI assistant tool usage for self-reflection",
-        "parameters": {
-            "type": "object", 
-            "properties": {
-                "days": {"type": "integer", "minimum": 1, "maximum": 30, "description": "Number of days to analyze"}
-            }
-        }
-    },
-    
-    "reflect_on_tool_usage": {
-        "description": "🔧 NEW: Generate insights about tool usage patterns and efficiency",
+
+    "store_memory": {
+        "description": "Create a curated memory entry",
         "parameters": {
             "type": "object",
             "properties": {
-                "days": {"type": "integer", "minimum": 1, "maximum": 30, "description": "Analysis period in days"}
+                "content": {"type": "string", "description": "Memory content"},
+                "memory_type": {"type": "string", "description": "Type of memory"},
+                "importance_level": {"type": "integer", "description": "Importance (1-10)", "default": 5},
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "Memory tags"},
+                "source_conversation_id": {"type": "string", "description": "Source conversation ID"}
+            },
+            "required": ["content"]
+        }
+    },
+
+    "store_conversation": {
+        "description": "Store conversation automatically",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "description": "Conversation content"},
+                "role": {"type": "string", "description": "Role (user/assistant)"},
+                "session_id": {"type": "string", "description": "Session identifier"},
+                "metadata": {"type": "object", "description": "Additional metadata"}
+            },
+            "required": ["content", "role"]
+        }
+    },
+
+    "update_memory": {
+        "description": "Update an existing curated memory",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "memory_id": {"type": "string", "description": "Memory ID to update"},
+                "content": {"type": "string", "description": "Updated content"},
+                "importance_level": {"type": "integer", "description": "Updated importance"},
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "Updated tags"}
+            },
+            "required": ["memory_id"]
+        }
+    },
+
+    # Schedule operations
+    "create_appointment": {
+        "description": "Create an appointment",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Appointment title"},
+                "description": {"type": "string", "description": "Appointment description"},
+                "scheduled_datetime": {"type": "string", "description": "ISO format datetime"},
+                "location": {"type": "string", "description": "Location"}
+            },
+            "required": ["title", "scheduled_datetime"]
+        }
+    },
+
+    "create_reminder": {
+        "description": "Create a reminder",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "description": "Reminder content"},
+                "due_datetime": {"type": "string", "description": "ISO format datetime"},
+                "priority_level": {"type": "integer", "description": "Priority (1-10)", "default": 5}
+            },
+            "required": ["content", "due_datetime"]
+        }
+    },
+
+    "get_recent_context": {
+        "description": "Get recent conversation context",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Number of recent items", "default": 5},
+                "session_id": {"type": "string", "description": "Specific session ID"}
             }
         }
     },
-    
+
     "get_system_health": {
-        "description": "Get comprehensive system health and statistics",
-        "parameters": {"type": "object", "properties": {}}
+        "description": "Get comprehensive system health, statistics, and database status",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False
+        }
+    },
+
+    # Tool reflection and analysis
+    "get_tool_usage_summary": {
+        "description": "Get AI tool usage summary and insights for self-reflection",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "days": {"type": "integer", "description": "Days to analyze", "default": 7},
+                "client_id": {"type": "string", "description": "Specific client ID to analyze"}
+            }
+        }
+    },
+
+    "reflect_on_tool_usage": {
+        "description": "AI self-reflection on tool usage patterns and effectiveness",
+        "parameters": {
+            "type": "object", 
+            "properties": {
+                "days": {"type": "integer", "description": "Days to analyze", "default": 7},
+                "client_id": {"type": "string", "description": "Specific client ID to analyze"}
+            }
+        }
+    },
+
+    "get_ai_insights": {
+        "description": "Get recent AI self-reflection insights and patterns",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Number of insights", "default": 5},
+                "insight_type": {"type": "string", "description": "Type of insight to filter"}
+            }
+        }
+    },
+
+    # Project development tools
+    "save_development_session": {
+        "description": "Save development session context",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "workspace_path": {"type": "string", "description": "Workspace path"},
+                "active_files": {"type": "array", "items": {"type": "string"}, "description": "Active files"},
+                "git_branch": {"type": "string", "description": "Current git branch"},
+                "session_summary": {"type": "string", "description": "Session summary"}
+            },
+            "required": ["workspace_path"]
+        }
+    },
+
+    "store_project_insight": {
+        "description": "Store development insight or decision",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "insight_type": {"type": "string", "description": "Type of insight"},
+                "content": {"type": "string", "description": "Insight content"},
+                "related_files": {"type": "array", "items": {"type": "string"}, "description": "Related files"},
+                "importance_level": {"type": "integer", "description": "Importance (1-10)", "default": 5}
+            },
+            "required": ["content"]
+        }
+    },
+
+    "search_project_history": {
+        "description": "Search development history",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query"},
+                "limit": {"type": "integer", "description": "Max results", "default": 10}
+            },
+            "required": ["query"]
+        }
+    },
+
+    "link_code_context": {
+        "description": "Link conversation to specific code context",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string", "description": "File path"},
+                "function_name": {"type": "string", "description": "Function name"},
+                "description": {"type": "string", "description": "Context description"},
+                "conversation_id": {"type": "string", "description": "Related conversation ID"}
+            },
+            "required": ["file_path", "description"]
+        }
+    },
+
+    "get_project_continuity": {
+        "description": "Get context to continue development work",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "workspace_path": {"type": "string", "description": "Workspace path"},
+                "limit": {"type": "integer", "description": "Context items", "default": 5}
+            }
+        }
     }
 }
 
