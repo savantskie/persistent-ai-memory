@@ -49,10 +49,16 @@ class DatabaseMaintenance:
             "maintenance_timestamp": datetime.now(timezone.utc).isoformat(),
             "cleanup_results": {},
             "optimization_results": {},
-            "statistics": {}
+            "statistics": {},
+            "schema_upgrades": []
         }
         
         try:
+            # 0. Apply any needed schema upgrades
+            logger.info("🔄 Checking and applying schema upgrades...")
+            schema_upgrades = await self._upgrade_schemas()
+            results["schema_upgrades"] = schema_upgrades
+            
             # 1. Clean up old data based on retention policies
             logger.info("📅 Applying retention policies...")
             results["cleanup_results"] = await self._apply_retention_policies(force)
@@ -249,6 +255,61 @@ class DatabaseMaintenance:
         results["duplicate_messages_removed"] = duplicate_messages
         return results
     
+    async def _upgrade_messages_schema(self) -> List[str]:
+        """Upgrade messages table schema if needed"""
+        upgrades_applied = []
+        
+        try:
+            # Use raw connection for schema modification
+            conn = self.memory_system.conversations_db.get_connection()
+            try:
+                # First check if we need to modify the source_type column
+                cursor = conn.execute("""SELECT sql FROM sqlite_master 
+                                      WHERE type='table' AND name='messages'""")
+                table_sql = cursor.fetchone()[0]
+                
+                if 'source_type TEXT NOT NULL' in table_sql:
+                    # We need to modify the constraint
+                    logger.info("Updating messages table source_type constraint")
+                    
+                    # Create new table with modified schema
+                    conn.execute("""CREATE TABLE messages_new (
+                        message_id TEXT PRIMARY KEY,
+                        conversation_id TEXT NOT NULL,
+                        timestamp TEXT NOT NULL,
+                        role TEXT NOT NULL,
+                        content TEXT NOT NULL,
+                        source_type TEXT DEFAULT 'unknown',
+                        source_id TEXT,
+                        source_url TEXT,
+                        source_metadata TEXT,
+                        sync_status TEXT,
+                        last_sync TEXT,
+                        metadata TEXT,
+                        embedding BLOB,
+                        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (conversation_id) REFERENCES conversations (conversation_id)
+                    )""")
+                    
+                    # Copy data
+                    conn.execute("""INSERT INTO messages_new 
+                                  SELECT * FROM messages""")
+                    
+                    # Drop old table and rename new one
+                    conn.execute("DROP TABLE messages")
+                    conn.execute("ALTER TABLE messages_new RENAME TO messages")
+                    conn.commit()
+                    
+                    upgrades_applied.append("updated_messages_source_type")
+                    logger.info("Successfully updated messages table schema")
+            finally:
+                conn.close()
+                
+        except Exception as e:
+            logger.error(f"Error upgrading messages schema: {e}")
+            
+        return upgrades_applied
+
     async def _optimize_databases(self) -> Dict:
         """Optimize database performance"""
         results = {}
@@ -290,6 +351,42 @@ class DatabaseMaintenance:
         
         return results
     
+    async def _upgrade_schemas(self) -> List[str]:
+        """Apply any needed schema upgrades"""
+        upgrades_applied = []
+        
+        try:
+            # 1. Upgrade development_conversations table
+            logger.info("Checking development_conversations schema...")
+            conn = self.memory_system.vscode_db.get_connection()
+            try:
+                # Check if column exists
+                cursor = conn.execute("""SELECT COUNT(*) 
+                                      FROM pragma_table_info('development_conversations') 
+                                      WHERE name='source_metadata'""")
+                has_column = cursor.fetchone()[0] > 0
+                
+                if not has_column:
+                    logger.info("Adding source_metadata column to development_conversations table")
+                    # Add the column
+                    conn.execute("""ALTER TABLE development_conversations 
+                                  ADD COLUMN source_metadata TEXT""")
+                    conn.commit()
+                    upgrades_applied.append("added_source_metadata_column")
+                    logger.info("Successfully added source_metadata column")
+            finally:
+                conn.close()
+                
+            # 2. Upgrade messages table schema
+            logger.info("Checking messages table schema...")
+            messages_upgrades = await self._upgrade_messages_schema()
+            upgrades_applied.extend(messages_upgrades)
+                
+        except Exception as e:
+            logger.error(f"Error during schema upgrades: {e}")
+            
+        return upgrades_applied
+
     async def _get_conversation_stats(self) -> Dict:
         """Get current conversation statistics"""
         conversations = await self.memory_system.conversations_db.execute_query(
@@ -322,7 +419,7 @@ class DatabaseMaintenance:
         return stats
 
 
-# Integration function to add to FridayMemorySystem
+# Integration function to add to PersistentAIMemorySystem
 async def run_database_maintenance(memory_system, force: bool = False) -> Dict:
     """Convenience function to run database maintenance"""
     maintenance = DatabaseMaintenance(memory_system)

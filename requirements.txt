@@ -1,3 +1,4 @@
 aiohttp>=3.8.0
 watchdog>=2.1.0
 numpy>=1.21.0
+mcp>=1.0.0

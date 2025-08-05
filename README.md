@@ -274,6 +274,7 @@ Check the `examples/` directory for:
 - **[Koboldcpp Integration](KOBOLDCPP_INTEGRATION.md)** - Complete setup guide for Koboldcpp compatibility
 - **LM Studio** - Built-in support for embeddings and conversation capture
 - **VS Code** - MCP server integration for development workflows
+- **SillyTavern** - MCP server support with character-specific memory tools
 - **Ollama** - Compatible through file monitoring and HTTP API approaches
 
 ### Integration Methods
@@ -302,6 +303,7 @@ The system now provides comprehensive cross-source memory management:
   - ChatGPT desktop app
   - Claude/Anthropic
   - Character.ai
+  - SillyTavern (file monitoring + MCP server)
   - text-generation-webui
   - Ollama
   - Generic text/markdown formats
@@ -374,6 +376,24 @@ We welcome contributions! This system is designed to be:
 - [ ] **Deferred Retry Queue** - Resilient file import with retry logic
 - [ ] **Memory Reflection Engine** - Meta-insights from memory patterns
 - [ ] **Export/Import Tools** - Backup and migration utilities
+
+## 🌟 Community Requests & Platform Support
+
+**Recently Added Platforms** (Based on Reddit Community Feedback):
+- ✅ **SillyTavern** - AI character chat interface with conversation logging
+- ✅ **Gemini CLI** - Google's Gemini command line interface support
+- ✅ **Open WebUI** - Local web-based LLM interface (multiple install locations)
+
+**Total Platform Support**: **11+ Chat Platforms**
+- LM Studio, Ollama, VS Code Copilot, ChatGPT, Claude, Perplexity, Jan AI, Open WebUI, Text Generation WebUI, SillyTavern, Gemini CLI
+
+**Upcoming Community Requests**:
+- [ ] **GraphDB Integration** - Graph database support for relationship mapping (community requested)
+- [ ] **Discord Bot Integration** - Chat logging for Discord AI bots
+- [ ] **Telegram Bot Support** - Conversation tracking for Telegram bots
+- [ ] **API Standardization** - Universal chat format for easier platform integration
+
+*Have a platform request? Open an issue or submit a PR - all contributors get credited!*
 
 ## 📄 License
 

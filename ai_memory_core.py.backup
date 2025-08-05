@@ -588,24 +588,13 @@ class ConversationDatabase(DatabaseManager):
                     "duplicate": True
                 }
         
-        # Auto-create session if not provided or doesn't exist
+        # Auto-create session if not provided
         if not session_id:
             session_id = str(uuid.uuid4())
             await self.execute_update(
                 "INSERT INTO sessions (session_id, start_timestamp, context) VALUES (?, ?, ?)",
                 (session_id, timestamp, "auto-created")
             )
-        else:
-            # Check if session exists, create if not
-            existing_session = await self.execute_query(
-                "SELECT session_id FROM sessions WHERE session_id = ?",
-                (session_id,)
-            )
-            if not existing_session:
-                await self.execute_update(
-                    "INSERT INTO sessions (session_id, start_timestamp, context) VALUES (?, ?, ?)",
-                    (session_id, timestamp, "imported-session")
-                )
         
         # Auto-create conversation if not provided
         if not conversation_id:
@@ -1097,54 +1086,12 @@ class ConversationFileMonitor:
             home / "Library" / "Application Support" / "LM Studio" / "conversations"  # macOS (old location)
         ]
         
-        # Ollama database paths (SQLite database instead of files)
-        ollama_db_paths = [
-            home / "AppData" / "Local" / "Ollama" / "db.sqlite",  # Windows
-            home / ".local" / "share" / "ollama" / "db.sqlite",  # Linux
-            home / "Library" / "Application Support" / "Ollama" / "db.sqlite"  # macOS
-        ]
-        
-        # Additional popular chat platforms
-        perplexity_paths = [
-            home / "AppData" / "Roaming" / "Perplexity" / "conversations",  # Windows
-            home / ".config" / "perplexity" / "conversations",  # Linux
-            home / "Library" / "Application Support" / "Perplexity" / "conversations"  # macOS
-        ]
-        
-        jan_ai_paths = [
-            home / "AppData" / "Roaming" / "Jan" / "conversations",  # Windows
-            home / ".config" / "jan" / "conversations",  # Linux
-            home / "Library" / "Application Support" / "Jan" / "conversations"  # macOS
-        ]
-        
-        open_webui_paths = [
-            home / ".open-webui" / "data" / "chats",  # All platforms
-            home / "open-webui" / "data" / "chats",  # Alternative location
-        ]
-        
-        # Text generation WebUI paths  
-        text_gen_webui_paths = [
-            home / "text-generation-webui" / "logs",
-            home / "text-generation-webui" / "characters",
-            home / "Documents" / "text-generation-webui" / "logs"
-        ]
-        
-        # SillyTavern paths (requested by Reddit community)
-        sillytavern_paths = [
-            home / "SillyTavern" / "data" / "chats",  # Default installation
-            home / "AppData" / "Roaming" / "SillyTavern" / "chats",  # Windows
-            home / ".config" / "sillytavern" / "chats",  # Linux
-            home / "Library" / "Application Support" / "SillyTavern" / "chats",  # macOS
-            documents / "SillyTavern" / "chats",  # User documents
-            downloads / "SillyTavern" / "data" / "chats"  # Downloaded version
-        ]
-        
-        # Gemini CLI paths (requested by Reddit community)
-        gemini_cli_paths = [
-            home / ".gemini" / "conversations",  # Linux/macOS
-            home / "AppData" / "Roaming" / "gemini-cli" / "conversations",  # Windows
-            home / ".config" / "gemini" / "conversations",  # Linux alternative
-            home / "Library" / "Application Support" / "Gemini" / "conversations"  # macOS
+        # Ollama chat directories
+        ollama_paths = [
+            home / ".ollama" / "chats",  # Windows/Linux/macOS (main location)
+            home / "AppData" / "Roaming" / "Ollama" / "chats",  # Windows (alternative)
+            home / ".config" / "ollama" / "chats",  # Linux (alternative)
+            home / "Library" / "Application Support" / "Ollama" / "chats"  # macOS (alternative)
         ]
         
         # VS Code workspace storage directories
@@ -1163,20 +1110,9 @@ class ConversationFileMonitor:
         
         # Add paths for each application
         add_paths_if_exist(lm_studio_paths, "LM Studio")
+        add_paths_if_exist(ollama_paths, "Ollama")
         add_paths_if_exist(chatgpt_paths, "ChatGPT")
         add_paths_if_exist(claude_paths, "Claude")
-        add_paths_if_exist(perplexity_paths, "Perplexity")
-        add_paths_if_exist(jan_ai_paths, "Jan AI")
-        add_paths_if_exist(open_webui_paths, "Open WebUI")
-        add_paths_if_exist(text_gen_webui_paths, "Text Generation WebUI")
-        add_paths_if_exist(sillytavern_paths, "SillyTavern")
-        add_paths_if_exist(gemini_cli_paths, "Gemini CLI")
-        
-        # Special handling for Ollama database
-        for db_path in ollama_db_paths:
-            if db_path.exists():
-                directories.append(str(db_path))
-                logger.info(f"Found Ollama database: {db_path}")
         
         # Add VS Code workspace storage paths - find specific workspace hashes
         for vscode_base in vscode_base_paths:
@@ -1423,11 +1359,6 @@ class ConversationFileMonitor:
         """Extract conversations from various file formats with timestamps, using registry-based extensibility and robust deduplication"""
         conversations = []
         try:
-            # Special handling for Ollama SQLite database
-            if file_path.lower().endswith('db.sqlite') and 'ollama' in file_path.lower():
-                conversations.extend(self._extract_ollama_database(file_path))
-                return conversations
-            
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
 
@@ -1485,12 +1416,6 @@ class ConversationFileMonitor:
             if isinstance(data, dict):
                 if 'mapping' in data:
                     conversations.extend(self._parse_chatgpt_format(data))
-                elif 'messages' in data and self._is_lmstudio_format(data):
-                    conversations.extend(self._parse_lmstudio_format(data))
-                elif ('messages' in data or 'chat' in data) and self._is_sillytavern_format(data):
-                    conversations.extend(self._parse_sillytavern_format(data))
-                elif ('conversation' in data or ('messages' in data and self._is_gemini_cli_format(data))):
-                    conversations.extend(self._parse_gemini_cli_format(data))
                 elif 'messages' in data:
                     conversations.extend(self._parse_claude_format(data))
             elif isinstance(data, list):
@@ -1595,208 +1520,6 @@ class ConversationFileMonitor:
         
         return conversations
     
-    def _is_lmstudio_format(self, data: Dict) -> bool:
-        """Check if data is in LM Studio format (has messages with versions structure)"""
-        try:
-            messages = data.get('messages', [])
-            if not messages:
-                return False
-            # Check if first message has the LM Studio structure
-            first_msg = messages[0] if isinstance(messages, list) else None
-            return (isinstance(first_msg, dict) and 
-                    'versions' in first_msg and 
-                    'currentlySelected' in first_msg)
-        except:
-            return False
-
-    def _is_sillytavern_format(self, data: Dict) -> bool:
-        """Check if data is in SillyTavern format"""
-        if not isinstance(data, dict):
-            return False
-        
-        # SillyTavern specific indicators
-        if 'messages' in data:
-            messages = data.get('messages', [])
-            if isinstance(messages, list) and messages:
-                first_msg = messages[0]
-                if isinstance(first_msg, dict):
-                    # SillyTavern specific fields
-                    return 'is_user' in first_msg or 'mes' in first_msg or 'send_date' in first_msg
-        
-        # Alternative SillyTavern format
-        if 'chat' in data:
-            chat = data.get('chat', [])
-            if isinstance(chat, list) and chat:
-                first_msg = chat[0]
-                if isinstance(first_msg, dict):
-                    return 'is_user' in first_msg or 'mes' in first_msg
-        
-        return False
-
-    def _is_gemini_cli_format(self, data: Dict) -> bool:
-        """Check if data is in Gemini CLI format"""
-        if not isinstance(data, dict):
-            return False
-        
-        # Gemini CLI specific structure
-        if 'conversation' in data:
-            return True
-        
-        # Check for Gemini-specific message format
-        if 'messages' in data:
-            messages = data.get('messages', [])
-            if isinstance(messages, list) and messages:
-                first_msg = messages[0]
-                if isinstance(first_msg, dict):
-                    # Gemini uses 'parts' array or 'model' role
-                    return ('parts' in first_msg or 
-                           first_msg.get('role') == 'model' or
-                           'response' in first_msg)
-        
-        return False
-
-    def _parse_lmstudio_format(self, data: Dict) -> List[Dict]:
-        """Parse LM Studio conversation format with versions and complex content structure"""
-        conversations = []
-        try:
-            messages = data.get('messages', [])
-            conversation_timestamp = data.get('createdAt')
-            base_timestamp = None
-            
-            if conversation_timestamp:
-                try:
-                    # LM Studio uses millisecond timestamps
-                    base_timestamp = datetime.fromtimestamp(conversation_timestamp / 1000, timezone.utc)
-                except (ValueError, TypeError):
-                    pass
-            
-            for i, msg in enumerate(messages):
-                if not isinstance(msg, dict) or 'versions' not in msg:
-                    continue
-                
-                versions = msg.get('versions', [])
-                current_version = msg.get('currentlySelected', 0)
-                
-                if 0 <= current_version < len(versions):
-                    version = versions[current_version]
-                    
-                    role = version.get('role', 'unknown')
-                    content_parts = version.get('content', [])
-                    
-                    # Extract text content from LM Studio's complex content structure
-                    text_content = []
-                    for part in content_parts:
-                        if isinstance(part, dict):
-                            if part.get('type') == 'text':
-                                text_content.append(part.get('text', ''))
-                            elif part.get('type') == 'file':
-                                # Handle file attachments
-                                file_info = f"[File: {part.get('fileIdentifier', 'unknown')}]"
-                                text_content.append(file_info)
-                        elif isinstance(part, str):
-                            text_content.append(part)
-                    
-                    # For assistant messages, handle multi-step responses
-                    if version.get('type') == 'multiStep' and 'steps' in version:
-                        for step in version.get('steps', []):
-                            if step.get('type') == 'contentBlock':
-                                step_content = step.get('content', [])
-                                for step_part in step_content:
-                                    if isinstance(step_part, dict) and step_part.get('type') == 'text':
-                                        text_content.append(step_part.get('text', ''))
-                    
-                    final_content = ' '.join(text_content).strip()
-                    if final_content:
-                        # Calculate approximate timestamp for each message
-                        timestamp = None
-                        if base_timestamp:
-                            # Spread messages over time based on their position
-                            message_time = base_timestamp + timedelta(minutes=i * 2)
-                            timestamp = message_time.isoformat()
-                        
-                        conversations.append({
-                            'role': role,
-                            'content': final_content,
-                            'timestamp': timestamp,
-                            'metadata': {
-                                'source': 'LM_Studio',
-                                'model': data.get('lastUsedModel', {}).get('name', 'unknown'),
-                                'conversation_name': data.get('name', 'Unknown'),
-                                'version_index': current_version,
-                                'message_index': i
-                            }
-                        })
-        except Exception as e:
-            logger.error(f"Error parsing LM Studio format: {e}")
-        
-        return conversations
-    
-    def _extract_ollama_database(self, db_path: str) -> List[Dict]:
-        """Extract conversations from Ollama SQLite database."""
-        conversations = []
-        try:
-            import sqlite3
-            
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
-            
-            # Get all chats with their messages
-            cursor.execute("""
-                SELECT c.id, c.title, c.created_at,
-                       m.role, m.content, m.model_name, m.created_at as message_created_at
-                FROM chats c
-                LEFT JOIN messages m ON c.id = m.chat_id
-                ORDER BY c.created_at, m.created_at
-            """)
-            
-            rows = cursor.fetchall()
-            conn.close()
-            
-            if not rows:
-                logger.debug(f"No conversations found in Ollama database: {db_path}")
-                return conversations
-            
-            # Group messages by chat and convert to conversation format
-            chats = {}
-            for row in rows:
-                chat_id, title, chat_created_at, role, content, model_name, msg_created_at = row
-                
-                if chat_id not in chats:
-                    chats[chat_id] = {
-                        'title': title,
-                        'created_at': chat_created_at,
-                        'messages': []
-                    }
-                
-                if role and content:  # Only add if message exists
-                    # Convert timestamp if needed
-                    timestamp = None
-                    if msg_created_at:
-                        try:
-                            # Parse ISO format timestamp
-                            timestamp = datetime.fromisoformat(msg_created_at.replace('Z', '+00:00')).isoformat()
-                        except (ValueError, TypeError):
-                            pass
-                    
-                    conversations.append({
-                        'role': role,
-                        'content': content,
-                        'timestamp': timestamp,
-                        'metadata': {
-                            'source': 'Ollama',
-                            'model': model_name or 'unknown',
-                            'chat_id': chat_id,
-                            'chat_title': title
-                        }
-                    })
-            
-            logger.info(f"Extracted {len(conversations)} messages from {len(chats)} Ollama chats")
-            
-        except Exception as e:
-            logger.error(f"Error extracting Ollama database {db_path}: {e}")
-        
-        return conversations
-    
     def _parse_text_format(self, content: str) -> List[Dict]:
         """Parse text-based conversation formats with timestamp detection"""
         conversations = []
@@ -1867,95 +1590,6 @@ class ConversationFileMonitor:
                 'role': current_role,
                 'content': '\n'.join(current_content)
             })
-        
-        return conversations
-
-    def _parse_sillytavern_format(self, data: Dict) -> List[Dict]:
-        """Parse SillyTavern conversation format"""
-        conversations = []
-        
-        try:
-            # SillyTavern typically stores chats in nested format
-            if 'messages' in data:
-                for msg in data['messages']:
-                    # SillyTavern message format
-                    role = 'user' if msg.get('is_user', False) else 'assistant'
-                    content = msg.get('mes', msg.get('message', ''))
-                    timestamp = msg.get('send_date', msg.get('timestamp'))
-                    
-                    if content:
-                        conversations.append({
-                            'role': role,
-                            'content': str(content),
-                            'timestamp': self.parse_timestamp(timestamp),
-                            'metadata': {'source_type': 'sillytavern'}
-                        })
-            
-            # Alternative format for SillyTavern exports
-            elif 'chat' in data and isinstance(data['chat'], list):
-                for msg in data['chat']:
-                    conversations.append({
-                        'role': 'user' if msg.get('is_user') else 'assistant',
-                        'content': str(msg.get('mes', '')),
-                        'timestamp': self.parse_timestamp(msg.get('send_date')),
-                        'metadata': {'source_type': 'sillytavern'}
-                    })
-                    
-        except Exception as e:
-            logger.warning(f"Error parsing SillyTavern format: {e}")
-        
-        return conversations
-
-    def _parse_gemini_cli_format(self, data: Dict) -> List[Dict]:
-        """Parse Gemini CLI conversation format"""
-        conversations = []
-        
-        try:
-            # Gemini CLI format (assuming similar to other CLI tools)
-            if 'conversation' in data and isinstance(data['conversation'], list):
-                for turn in data['conversation']:
-                    # User input
-                    if 'input' in turn:
-                        conversations.append({
-                            'role': 'user',
-                            'content': str(turn['input']),
-                            'timestamp': self.parse_timestamp(turn.get('timestamp')),
-                            'metadata': {'source_type': 'gemini_cli'}
-                        })
-                    
-                    # Assistant response
-                    if 'response' in turn:
-                        conversations.append({
-                            'role': 'assistant',
-                            'content': str(turn['response']),
-                            'timestamp': self.parse_timestamp(turn.get('timestamp')),
-                            'metadata': {'source_type': 'gemini_cli'}
-                        })
-            
-            # Alternative format with messages array
-            elif 'messages' in data:
-                for msg in data['messages']:
-                    role = msg.get('role', 'user')
-                    if role == 'model':  # Gemini uses 'model' instead of 'assistant'
-                        role = 'assistant'
-                    
-                    content = ''
-                    if 'parts' in msg and isinstance(msg['parts'], list):
-                        # Gemini format with parts array
-                        content = ' '.join(str(part.get('text', part)) for part in msg['parts'])
-                    else:
-                        content = str(msg.get('content', msg.get('text', '')))
-                    
-                    if content:
-                        conversations.append({
-                            'role': role,
-                            'content': content,
-                            'timestamp': self.parse_timestamp(msg.get('timestamp')),
-                            'metadata': {'source_type': 'gemini_cli'}
-                        })
-                        
-        except Exception as e:
-            logger.warning(f"Error parsing Gemini CLI format: {e}")
         
         return conversations
 
@@ -2817,88 +2451,6 @@ class PersistentAIMemorySystem:
             "note": "Used text-based search (embeddings unavailable)"
         }
     
-    # SillyTavern-specific methods
-    async def get_character_context(self, character_name: str, context_type: str = None, limit: int = 5) -> Dict:
-        """Get relevant context about characters from memory"""
-        try:
-            # Search for character-specific memories
-            query = f"character {character_name}"
-            if context_type:
-                query += f" {context_type}"
-            
-            # Search memories and conversations
-            memories = await self.search_memories(query, limit=limit)
-            
-            # Filter and format results
-            character_context = {
-                "character_name": character_name,
-                "context_type": context_type,
-                "memories": memories.get("results", []),
-                "total_found": len(memories.get("results", [])),
-                "timestamp": get_current_timestamp()
-            }
-            
-            logger.info(f"Retrieved {len(memories.get('results', []))} memories for character: {character_name}")
-            return character_context
-            
-        except Exception as e:
-            logger.error(f"Error getting character context: {e}")
-            return {"error": str(e), "character_name": character_name}
-
-    async def store_roleplay_memory(self, character_name: str, event_description: str, 
-                                    importance_level: int = 5, tags: List[str] = None) -> Dict:
-        """Store important roleplay moments or character developments"""
-        try:
-            # Format the memory content
-            content = f"Character: {character_name}\nEvent: {event_description}"
-            
-            # Add roleplay-specific tags
-            if tags is None:
-                tags = []
-            tags.extend(["roleplay", "character", character_name.lower()])
-            
-            # Create the memory
-            result = await self.create_memory(
-                content=content,
-                memory_type="roleplay",
-                importance_level=importance_level,
-                tags=tags
-            )
-            
-            logger.info(f"Stored roleplay memory for character: {character_name}")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error storing roleplay memory: {e}")
-            return {"error": str(e), "character_name": character_name}
-
-    async def search_roleplay_history(self, query: str, character_name: str = None, limit: int = 10) -> Dict:
-        """Search past roleplay interactions and character development"""
-        try:
-            # Build search query
-            search_query = f"roleplay {query}"
-            if character_name:
-                search_query += f" character {character_name}"
-            
-            # Search with roleplay memory type filter
-            results = await self.search_memories(
-                query=search_query,
-                limit=limit,
-                memory_type="roleplay"
-            )
-            
-            # Add roleplay-specific formatting
-            results["search_type"] = "roleplay_history"
-            results["character_filter"] = character_name
-            results["original_query"] = query
-            
-            logger.info(f"Found {len(results.get('results', []))} roleplay history results")
-            return results
-            
-        except Exception as e:
-            logger.error(f"Error searching roleplay history: {e}")
-            return {"error": str(e), "query": query}
-
     # System maintenance
     async def run_database_maintenance(self, force: bool = False) -> Dict:
         """Run maintenance on all databases.
