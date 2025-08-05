@@ -288,6 +288,7 @@ class PersistentAIMemoryMCPServer(AutoMaintenanceMixin):
                 "store_conversation": self.memory_system.store_conversation,
                 "update_memory": self.memory_system.update_memory,
                 "get_recent_context": self.memory_system.get_recent_context,
+                "get_current_time": self._get_current_time,
                 
                 # Schedule operations  
                 "create_appointment": self.memory_system.create_appointment,
@@ -427,6 +428,24 @@ class PersistentAIMemoryMCPServer(AutoMaintenanceMixin):
             }
         }
     
+    async def _get_current_time(self, format: str = "ISO") -> Dict:
+        """Get the current time for appointment awareness"""
+        current_time = datetime.now()
+        
+        if format.upper() == "ISO":
+            formatted_time = current_time.isoformat()
+        else:
+            try:
+                formatted_time = current_time.strftime(format)
+            except ValueError:
+                formatted_time = current_time.isoformat()
+        
+        return {
+            "current_time": formatted_time,
+            "timestamp": current_time.timestamp(),
+            "timezone": current_time.astimezone().tzname()
+        }
+
     async def _get_tool_call_history(self, tool_name: str = None, limit: int = 50) -> Dict:
         """Get recent tool call history for analysis"""
         
@@ -733,6 +752,16 @@ MCP_TOOLS = {
             "properties": {
                 "workspace_path": {"type": "string", "description": "Workspace path"},
                 "limit": {"type": "integer", "description": "Context items", "default": 5}
+            }
+        }
+    },
+
+    "get_current_time": {
+        "description": "Get the current time and date for appointment awareness",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "format": {"type": "string", "description": "Optional format string for the time/date", "default": "ISO"}
             }
         }
     }
