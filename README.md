@@ -74,6 +74,38 @@ After installation, verify everything is working:
 python tests/test_health_check.py
 ```
 
+## 🛠️ Available Tools
+
+### Core Memory Tools (Available in All Environments)
+These tools are available in all environments (LM Studio, VS Code, etc.):
+
+- **Memory Management**:
+  - `search_memories` - Search through stored memories using semantic similarity
+  - `store_conversation` - Store conversation messages
+  - `create_memory` - Create a new curated memory entry
+  - `update_memory` - Update an existing memory entry
+  - `get_recent_context` - Get recent conversation context
+
+- **Schedule Management**:
+  - `create_appointment` - Create calendar appointments
+  - `create_reminder` - Set reminders with priorities
+
+- **System Tools**:
+  - `get_system_health` - Check system status and database health
+  - `get_tool_usage_summary` - Get AI tool usage statistics
+  - `reflect_on_tool_usage` - AI self-reflection on tool patterns
+  - `get_ai_insights` - Get AI's insights and patterns
+
+### IDE-Specific Tools
+These tools are only available in specific development environments:
+
+#### VS Code Tools
+- `save_development_session` - Save VS Code development context
+- `store_project_insight` - Store development insights
+- `search_project_history` - Search project development history
+- `link_code_context` - Link conversations to specific code
+- `get_project_continuity` - Get context for continuing development work
+
 ## 🎯 Features
 
 - **Enhanced Memory System**:
