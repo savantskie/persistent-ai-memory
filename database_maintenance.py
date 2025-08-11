@@ -237,22 +237,90 @@ class DatabaseMaintenance:
         }
     
     async def _remove_duplicates(self) -> Dict:
-        """Remove any remaining duplicate entries"""
-        # This should be minimal with our new duplicate prevention
+        """Remove any remaining duplicate entries with strict deduplication"""
         results = {}
-        
-        # Remove duplicate messages (same content, role, timestamp within 1 minute)
-        duplicate_messages = await self.memory_system.conversations_db.execute_update("""
-            DELETE FROM messages 
+
+        # Deduplicate messages by (content, role, conversation_id), keep entry with earliest timestamp
+        dedup_query_messages = '''
+            DELETE FROM messages
             WHERE message_id NOT IN (
-                SELECT MIN(message_id) 
-                FROM messages 
-                GROUP BY content, role, conversation_id, 
-                         datetime(timestamp, 'start of minute')
+                SELECT message_id FROM (
+                    SELECT message_id
+                    FROM messages m1
+                    WHERE timestamp = (
+                        SELECT MIN(timestamp)
+                        FROM messages m2
+                        WHERE m2.content = m1.content
+                          AND m2.role = m1.role
+                          AND m2.conversation_id = m1.conversation_id
+                    )
+                )
             )
-        """)
-        
+        '''
+        duplicate_messages = await self.memory_system.conversations_db.execute_update(dedup_query_messages)
         results["duplicate_messages_removed"] = duplicate_messages
+
+        # Deduplicate curated memories by (content, memory_type, source_conversation_id), keep entry with earliest timestamp_created
+        dedup_query_memories = '''
+            DELETE FROM curated_memories
+            WHERE memory_id NOT IN (
+                SELECT memory_id FROM (
+                    SELECT memory_id
+                    FROM curated_memories m1
+                    WHERE timestamp_created = (
+                        SELECT MIN(timestamp_created)
+                        FROM curated_memories m2
+                        WHERE m2.content = m1.content
+                          AND m2.memory_type = m1.memory_type
+                          AND (m2.source_conversation_id IS m1.source_conversation_id OR (m2.source_conversation_id IS NULL AND m1.source_conversation_id IS NULL))
+                    )
+                )
+            )
+        '''
+        duplicate_memories = await self.memory_system.ai_memory_db.execute_update(dedup_query_memories)
+        results["duplicate_memories_removed"] = duplicate_memories
+
+        # Deduplicate reminders by (content, due_datetime, source_conversation_id), keep entry with earliest timestamp_created
+        dedup_query_reminders = '''
+            DELETE FROM reminders
+            WHERE reminder_id NOT IN (
+                SELECT reminder_id FROM (
+                    SELECT reminder_id
+                    FROM reminders r1
+                    WHERE timestamp_created = (
+                        SELECT MIN(timestamp_created)
+                        FROM reminders r2
+                        WHERE r2.content = r1.content
+                          AND r2.due_datetime = r1.due_datetime
+                          AND (r2.source_conversation_id IS r1.source_conversation_id OR (r2.source_conversation_id IS NULL AND r1.source_conversation_id IS NULL))
+                    )
+                )
+            )
+        '''
+        duplicate_reminders = await self.memory_system.schedule_db.execute_update(dedup_query_reminders)
+        results["duplicate_reminders_removed"] = duplicate_reminders
+
+        # Deduplicate appointments by (title, scheduled_datetime, location, source_conversation_id), keep entry with earliest timestamp_created
+        dedup_query_appointments = '''
+            DELETE FROM appointments
+            WHERE appointment_id NOT IN (
+                SELECT appointment_id FROM (
+                    SELECT appointment_id
+                    FROM appointments a1
+                    WHERE timestamp_created = (
+                        SELECT MIN(timestamp_created)
+                        FROM appointments a2
+                        WHERE a2.title = a1.title
+                          AND a2.scheduled_datetime = a1.scheduled_datetime
+                          AND (a2.location IS a1.location OR (a2.location IS NULL AND a1.location IS NULL))
+                          AND (a2.source_conversation_id IS a1.source_conversation_id OR (a2.source_conversation_id IS NULL AND a1.source_conversation_id IS NULL))
+                    )
+                )
+            )
+        '''
+        duplicate_appointments = await self.memory_system.schedule_db.execute_update(dedup_query_appointments)
+        results["duplicate_appointments_removed"] = duplicate_appointments
+
         return results
     
     async def _upgrade_messages_schema(self) -> List[str]:
