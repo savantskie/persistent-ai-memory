@@ -5,6 +5,14 @@
 
 > 🌟 **Community Call to Action**: Have you made improvements or additions to this system? We want to include your work! Every contributor will be properly credited in the final product. Whether it's bug fixes, new features, or documentation improvements - your contributions matter and will help shape the future of AI memory systems. Submit a pull request today!
 
+---
+🆕 **Recent Changes (2025-08-11)**
+- Robust startup: No background tasks (maintenance, import, deduplication) auto-start; explicit, safe startup only
+- Advanced deduplication: All major database classes (conversations, AI memories, schedule, VS Code projects) now have advanced duplicate detection and migration logic
+- Centralized maintenance: Maintenance and deduplication are now generic and centralized, not format-specific
+- Parity with Friday: Open-source version matches Friday’s main repo for all core features, including migration, deduplication, and startup sequencing
+---
+
 A comprehensive AI memory system that provides persistent, searchable storage for AI assistants with conversation tracking, MCP tool call logging, and intelligent scheduling.
 
 ## 🎉 Exciting News: Desktop App Coming Soon!
@@ -111,6 +119,9 @@ These tools are only available in specific development environments:
 - **Enhanced Memory System**:
   - SQLite-based persistent storage across all databases
   - Registry-based extensible import system
+  - **Advanced duplicate detection and migration logic in all major database classes**
+  - **Centralized, generic maintenance and deduplication routines**
+  - **Robust, explicit startup (no auto background tasks)**
   - Database-backed deduplication across all sources
   - Incremental imports (only new messages)
   - Enhanced error handling with detailed logging
@@ -138,6 +149,7 @@ These tools are only available in specific development environments:
     - Continuous system improvement
   - Multi-platform compatibility
   - Zero configuration needed
+  - **Full feature parity with Friday’s main repo**
 
 - **Platform Support**:
   - LM Studio integration
@@ -236,7 +248,12 @@ memory = PersistentAIMemorySystem(
 
 ## 🛡️ System Maintenance
 
-The system now includes automatic maintenance features:
+The system now includes automatic and **centralized maintenance features**:
+
+- **Centralized Maintenance & Deduplication**:
+  - Generic, registry-based maintenance routines
+  - Advanced duplicate detection and migration logic for all database classes
+  - No format-specific or auto-startup tasks; all maintenance is explicit and robust
 
 - **Database Optimization**:
   - Automatic vacuum and reindex
