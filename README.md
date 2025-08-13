@@ -5,6 +5,8 @@
 
 > 🌟 **Community Call to Action**: Have you made improvements or additions to this system? We want to include your work! Every contributor will be properly credited in the final product. Whether it's bug fixes, new features, or documentation improvements - your contributions matter and will help shape the future of AI memory systems. Submit a pull request today!
 
+**GITHUB LINK** - https://github.com/savantskie/persistent-ai-memory.git
+
 ---
 🆕 **Recent Changes (2025-08-11)**
 - Robust startup: No background tasks (maintenance, import, deduplication) auto-start; explicit, safe startup only
@@ -435,6 +437,7 @@ This project represents a unique collaboration between human creativity and AI a
 
 Built with determination, debugged with patience, and designed for the future of AI assistance.
 
+**GITHUB LINK** - https://github.com/savantskie/persistent-ai-memory.git
 ---
 
 **⭐ If this project helps you build better AI assistants, please give it a star!**

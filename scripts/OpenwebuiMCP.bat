@@ -1,0 +1,1 @@
+mcpo --host 0.0.0.0 --port 12345 -- <path to your memory mcp file>
