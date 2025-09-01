@@ -422,7 +422,7 @@ MIT License - feel free to use this in your own AI projects!
 
 This project is the result of a collaborative effort between humans and AI assistants:
 
-- **@yourusername** - Project vision, architecture design, and testing
+- **@savantskie** - Project vision, architecture design, and testing
 - **GitHub Copilot** - Core implementation, database design, MCP server development, and tool call logging system
 - **ChatGPT** - Initial concept development, feature recommendations, and architectural guidance over 3 months of development
 
