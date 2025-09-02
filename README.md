@@ -8,11 +8,11 @@
 **GITHUB LINK** - https://github.com/savantskie/persistent-ai-memory.git
 
 ---
-🆕 **Recent Changes (2025-08-11)**
-- Robust startup: No background tasks (maintenance, import, deduplication) auto-start; explicit, safe startup only
-- Advanced deduplication: All major database classes (conversations, AI memories, schedule, VS Code projects) now have advanced duplicate detection and migration logic
-- Centralized maintenance: Maintenance and deduplication are now generic and centralized, not format-specific
-- Parity with Friday: Open-source version matches Friday’s main repo for all core features, including migration, deduplication, and startup sequencing
+🆕 **Recent Changes (2025-09-01)**
+- Updated `ai-memory-mcp_server.py` to include enhanced tool registration logic for `update_memory` and other tools.
+- Improved MCP server functionality to dynamically detect and register tools based on client context.
+- Added robust error handling and logging for tool execution.
+- Enhanced automatic maintenance tasks with centralized scheduling and improved database optimization routines.
 ---
 
 A comprehensive AI memory system that provides persistent, searchable storage for AI assistants with conversation tracking, MCP tool call logging, and intelligent scheduling.

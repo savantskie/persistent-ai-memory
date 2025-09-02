@@ -142,3 +142,6 @@ memory_data/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Allow tracking of ai-memory-mcp_server.py
+!ai-memory-mcp_server.py
