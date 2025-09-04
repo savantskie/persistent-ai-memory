@@ -154,7 +154,7 @@ class DatabaseManager:
                 logger.error(f"Params: {params}")
                 raise
                 
-    def parse_timestamp(timestamp: Union[str, int, float, None], fallback: Optional[datetime] = None) -> str:
+    def parse_timestamp(self, timestamp: Union[str, int, float, None], fallback: Optional[datetime] = None) -> str:
         """Parse various timestamp formats into ISO format string.
         
         Args:
@@ -2469,6 +2469,40 @@ class PersistentAIMemorySystem:
         messages = await self.conversations_db.get_recent_messages(limit, session_id)
         return [dict(msg) for msg in messages]
 
+    async def get_recent_context(self, limit: int = 10, session_id: str = None) -> Dict:
+        """Retrieve recent conversation context, optionally filtered by session."""
+        try:
+            if session_id:
+                query = """
+                    SELECT m.*, c.session_id 
+                    FROM messages m 
+                    JOIN conversations c ON m.conversation_id = c.conversation_id
+                    WHERE c.session_id = ?
+                    ORDER BY m.timestamp DESC 
+                    LIMIT ?
+                """
+                params = (session_id, limit)
+            else:
+                query = """
+                    SELECT m.*, c.session_id 
+                    FROM messages m 
+                    JOIN conversations c ON m.conversation_id = c.conversation_id
+                    ORDER BY m.timestamp DESC 
+                    LIMIT ?
+                """
+                params = (limit,)
+
+            rows = await self.conversations_db.execute_query(query, params)
+            return {
+                "status": "success",
+                "recent_context": [dict(row) for row in rows]
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": str(e)
+            }
+
     # =============================================================================
     # AI MEMORY OPERATIONS
     # =============================================================================
@@ -2494,7 +2528,7 @@ class PersistentAIMemorySystem:
     # SCHEDULE OPERATIONS
     # =============================================================================
     
-    async def create_appointment(self, title: str, scheduled_datetime: str,
+    async def create_appointment(self, title: str, scheduled_datetime: str, 
                                description: str = None, location: str = None,
                                source_conversation_id: str = None) -> Dict:
         """Create an appointment with automatic embedding generation"""
@@ -2515,7 +2549,7 @@ class PersistentAIMemorySystem:
             "appointment_id": appointment_id
         }
     
-    async def create_reminder(self, content: str, due_datetime: str,
+    async def create_reminder(self, content: str, due_datetime: str, 
                             priority_level: int = 5, source_conversation_id: str = None) -> Dict:
         """Create a reminder with automatic embedding generation"""
         
