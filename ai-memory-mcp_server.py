@@ -242,6 +242,153 @@ class AIMemoryMCPServer:
                         "insight_type": {"type": "string", "description": "Type of insight to filter"}
                     }
                 }
+            ),
+            Tool(
+                name="get_active_reminders",
+                description="Get active (not completed) reminders",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "description": "Number of reminders to return", "default": 10},
+                        "days_ahead": {"type": "integer", "description": "Only show reminders due within X days", "default": 30}
+                    }
+                }
+            ),
+            Tool(
+                name="get_completed_reminders",
+                description="Get recently completed reminders",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "days": {"type": "integer", "description": "Look back X days", "default": 7}
+                    }
+                }
+            ),
+            Tool(
+                name="complete_reminder",
+                description="Mark a reminder as completed",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "reminder_id": {"type": "string", "description": "ID of the reminder to complete"}
+                    },
+                    "required": ["reminder_id"]
+                }
+            ),
+            Tool(
+                name="reschedule_reminder",
+                description="Update the due date of a reminder",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "reminder_id": {"type": "string", "description": "ID of the reminder"},
+                        "new_due_datetime": {"type": "string", "description": "New ISO datetime (e.g., 2025-08-03T14:00:00Z)"}
+                    },
+                    "required": ["reminder_id", "new_due_datetime"]
+                }
+            ),
+            Tool(
+                name="delete_reminder",
+                description="Permanently delete a reminder",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "reminder_id": {"type": "string", "description": "ID of the reminder to delete"}
+                    },
+                    "required": ["reminder_id"]
+                }
+            ),
+            Tool(
+                name="cancel_appointment",
+                description="Cancel a scheduled appointment",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "appointment_id": {"type": "string", "description": "ID of the appointment to cancel"}
+                    },
+                    "required": ["appointment_id"]
+                }
+            ),
+            Tool(
+                name="get_upcoming_appointments",
+                description="Get upcoming appointments (not cancelled)",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "description": "Number to return", "default": 5},
+                        "days_ahead": {"type": "integer", "description": "Only show within X days", "default": 30}
+                    }
+                }
+            ),
+            Tool(
+                name="get_appointments",
+                description="Get recent appointments, optionally filtered by date range",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "description": "Number of appointments to return", "default": 5},
+                        "days_ahead": {"type": "integer", "description": "Only show appointments scheduled within X days", "default": 30}
+                    }
+                }
+            ),
+            Tool(
+                name="store_ai_reflection",
+                description="Store an AI self-reflection/insight record (manual write)",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "content": {"type": "string", "description": "Freeform write-up of the reflection"},
+                        "reflection_type": {"type": "string", "description": "Category (e.g., tool_usage_analysis, memory, general)", "default": "general"},
+                        "insights": {"type": "array", "items": {"type": "string"}, "description": "Bullet insights derived from the analysis"},
+                        "recommendations": {"type": "array", "items": {"type": "string"}, "description": "Recommended next actions"},
+                        "confidence_level": {"type": "number", "description": "Confidence 0.0–1.0", "default": 0.7},
+                        "source_period_days": {"type": "integer", "description": "Days of data this reflection summarizes"}
+                    },
+                    "required": ["content"],
+                    "additionalProperties": False
+                }
+            ),
+            Tool(
+                name="write_ai_insights",
+                description="Alias of store_ai_reflection – write an AI self-reflection/insight record",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "content": {"type": "string", "description": "Freeform write-up of the reflection"},
+                        "reflection_type": {"type": "string", "description": "Category (e.g., tool_usage_analysis, memory, general)", "default": "general"},
+                        "insights": {"type": "array", "items": {"type": "string"}, "description": "Bullet insights derived from the analysis"},
+                        "recommendations": {"type": "array", "items": {"type": "string"}, "description": "Recommended next actions"},
+                        "confidence_level": {"type": "number", "description": "Confidence 0.0–1.0", "default": 0.7},
+                        "source_period_days": {"type": "integer", "description": "Days of data this reflection summarizes"}
+                    },
+                    "required": ["content"],
+                    "additionalProperties": False
+                }
+            ),
+            Tool(
+                name="get_current_time",
+                description="Get the current server time in ISO format (UTC and local)",
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": False
+                }
+            ),
+            Tool(
+                name="get_weather_open_meteo",
+                description="Open-Meteo forecast (no API key). Defaults to Motley, MN and caches once per local day.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "latitude": {"type": ["number", "null"], "description": "Ignored unless override=True"},
+                        "longitude": {"type": ["number", "null"], "description": "Ignored unless override=True"},
+                        "timezone_str": {"type": ["string", "null"], "description": "Ignored unless override=True"},
+                        "force_refresh": {"type": "boolean", "description": "Ignore same-day cache", "default": False},
+                        "return_changes_only": {"type": "boolean", "description": "If true, return only a summary of changed fields for today.", "default": False},
+                        "update_today": {"type": "boolean", "description": "If true (default), fetch and merge changes into today's file before returning.", "default": True},
+                        "severe_update": {"type": "boolean", "description": "If true, shrink the update window to 30 minutes for severe weather.", "default": False}
+                    }
+                }
             )
         ]
         except Exception as e:
@@ -440,6 +587,28 @@ class AIMemoryMCPServer:
                 result = await self.memory_system.reflect_on_tool_usage(**arguments)
             elif tool_name == "get_ai_insights":
                 result = await self.memory_system.get_ai_insights(**arguments)
+            elif tool_name == "get_active_reminders":
+                result = await self.memory_system.get_active_reminders(**arguments)
+            elif tool_name == "get_completed_reminders":
+                result = await self.memory_system.get_completed_reminders(**arguments)
+            elif tool_name == "complete_reminder":
+                result = await self.memory_system.complete_reminder(**arguments)
+            elif tool_name == "reschedule_reminder":
+                result = await self.memory_system.reschedule_reminder(**arguments)
+            elif tool_name == "delete_reminder":
+                result = await self.memory_system.delete_reminder(**arguments)
+            elif tool_name == "cancel_appointment":
+                result = await self.memory_system.cancel_appointment(**arguments)
+            elif tool_name == "get_upcoming_appointments":
+                result = await self.memory_system.get_upcoming_appointments(**arguments)
+            elif tool_name == "get_appointments":
+                result = await self.memory_system.get_appointments(**arguments)
+            elif tool_name == "store_ai_reflection" or tool_name == "write_ai_insights":
+                result = await self.memory_system.store_ai_reflection(**arguments)
+            elif tool_name == "get_current_time":
+                result = await self.memory_system.get_current_time()
+            elif tool_name == "get_weather_open_meteo":
+                result = await self.memory_system.get_weather_open_meteo(**arguments)
             # SillyTavern-specific tools
             elif tool_name == "get_character_context":
                 result = await self.memory_system.get_character_context(**arguments)

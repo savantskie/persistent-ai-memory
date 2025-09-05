@@ -8,7 +8,19 @@
 **GITHUB LINK** - https://github.com/savantskie/persistent-ai-memory.git
 
 ---
-🆕 **Recent Changes (2025-09-01)**
+🆕 **Recent Changes (2025-09-04)**
+- **🧠 Enhanced Embedding System**: Implemented intelligent embedding service with primary/fallback providers
+  - **Preservation Strategy**: All existing embeddings (15,000+) are automatically preserved
+  - **LM Studio Primary**: High-quality embeddings for new content via LM Studio
+  - **Ollama Fallback**: Fast local embeddings when LM Studio unavailable
+  - **Real-time Provider Monitoring**: Automatic availability detection and graceful fallback
+- **⚙️ Standardized Configuration**: Added `embedding_config.json` for easy provider management
+- **📁 Improved Organization**: Moved all test files to proper `tests/` folder structure
+- **🔧 Enhanced Core Systems**: Updated `ai_memory_core.py` with intelligent provider selection
+- **🛡️ Backward Compatibility**: All existing functionality preserved while adding new capabilities
+- **📊 Performance Optimization**: Better semantic search quality with preserved data integrity
+
+Previous Changes (2025-09-01):
 - Updated `ai-memory-mcp_server.py` to include enhanced tool registration logic for `update_memory` and other tools.
 - Improved MCP server functionality to dynamically detect and register tools based on client context.
 - Added robust error handling and logging for tool execution.
@@ -161,6 +173,57 @@ These tools are only available in specific development environments:
   - Cross-platform (Windows/Linux/macOS)
 
 ## 📚 Quick Start
+
+    - Learning from past interactions
+
+## ⚙️ Embedding Configuration
+
+The system supports multiple embedding providers with automatic fallback for optimal performance:
+
+### Supported Providers
+
+- **Ollama** (Default): Uses `qwen2.5:1.5b` for fast, lightweight embeddings
+- **LM Studio**: Uses `text-embedding-nomic-embed-text-v1.5` for quality embeddings
+- **OpenAI**: Uses `text-embedding-3-small` for high-quality cloud embeddings
+- **Custom**: Support for custom embedding servers
+
+### Configuration
+
+Edit `embedding_config.json` to customize your embedding setup:
+
+```json
+{
+  "embedding_configuration": {
+    "primary": {
+      "provider": "ollama",
+      "model": "qwen2.5:1.5b",
+      "base_url": "http://localhost:11434"
+    },
+    "fallback": {
+      "provider": "lm_studio", 
+      "model": "text-embedding-nomic-embed-text-v1.5",
+      "base_url": "http://localhost:1234"
+    }
+  }
+}
+```
+
+### Setup Instructions
+
+1. **For Ollama** (Recommended): 
+   ```bash
+   ollama pull qwen2.5:1.5b
+   ```
+
+2. **For LM Studio**: Load an embedding model in LM Studio
+
+3. **For OpenAI**: Add your API key to the config file
+
+4. **For Custom**: Configure your server URL and model name
+
+The system will automatically try the primary provider first, then fallback to the secondary if needed.
+
+## 🚀 Quick Start
 
 ### Basic Usage
 ```python
@@ -398,13 +461,27 @@ We welcome contributions! This system is designed to be:
 
 ## 🌟 Community Requests & Platform Support
 
-**Recently Added Platforms** (Based on Reddit Community Feedback):
+**Recently Added Platforms** (Based on Reddit Community Feedback & Local Storage Verification):
+- ✅ **SillyTavern** - AI character chat interface with conversation logging
+- ✅ **Gemini CLI** - Google's Gemini command line interface support  
+- ✅ **Open WebUI** - Local web-based LLM interface (multiple install locations)
+- ❌ **ChatGPT & Claude Desktop** - Removed after verification (cloud-only, no local storage)
+
+**Total Platform Support**: **9 Chat Platforms** (Based on Verified Local Storage)
+- ✅ **LM Studio** - Local conversations in JSON format  
+- ✅ **Ollama** - SQLite database with chat history
+- ✅ **VS Code Copilot** - Development conversation tracking
+- ✅ **Open WebUI** - SQLite database with conversation storage  
+- ✅ **Text Generation WebUI** - Local chat logs and history
 - ✅ **SillyTavern** - AI character chat interface with conversation logging
 - ✅ **Gemini CLI** - Google's Gemini command line interface support
-- ✅ **Open WebUI** - Local web-based LLM interface (multiple install locations)
+- ✅ **Jan AI** - Local AI assistant with conversation storage
+- ✅ **Perplexity** - Local conversation tracking (where applicable)
 
-**Total Platform Support**: **11+ Chat Platforms**
-- LM Studio, Ollama, VS Code Copilot, ChatGPT, Claude, Perplexity, Jan AI, Open WebUI, Text Generation WebUI, SillyTavern, Gemini CLI
+**❌ Cloud-Only Applications** (No Local Storage - Removed After Verification):
+- ❌ **ChatGPT Desktop** - Cloud-only, no local conversation storage
+- ❌ **Claude Desktop** - Cloud-only, no local conversation files
+- ❌ **Perplexity Web** - Cloud-based, no local storage
 
 **Upcoming Community Requests**:
 - [ ] **GraphDB Integration** - Graph database support for relationship mapping (community requested)

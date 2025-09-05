@@ -947,6 +947,49 @@ class ScheduleDatabase(DatabaseManager):
                         tuple(row_dict[col] for col in appointments_expected)
                     )
                 print(f"Restored {len(old_rows)} appointments after migration.")
+            # Appointments table migration
+            appointments_expected = [
+                'appointment_id', 'timestamp_created', 'scheduled_datetime', 'title', 'description',
+                'location', 'is_cancelled', 'source_conversation_id', 'embedding', 'created_at'
+            ]
+            cur = conn.execute("PRAGMA table_info(appointments)")
+            current_columns = [row[1] for row in cur.fetchall()]
+            needs_migration = False
+            if current_columns:
+                for col in appointments_expected:
+                    if col not in current_columns:
+                        needs_migration = True
+                        break
+            if needs_migration:
+                print("Migrating appointments table to new schema!")
+                old_rows = conn.execute("SELECT * FROM appointments").fetchall()
+                conn.execute("DROP TABLE IF EXISTS appointments")
+                conn.execute("""
+                    CREATE TABLE appointments (
+                        appointment_id TEXT PRIMARY KEY,
+                        timestamp_created TEXT NOT NULL,
+                        scheduled_datetime TEXT NOT NULL,
+                        title TEXT NOT NULL,
+                        description TEXT,
+                        location TEXT,
+                        is_cancelled INTEGER DEFAULT 0,
+                        source_conversation_id TEXT,
+                        embedding BLOB,
+                        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                for row in old_rows:
+                    row_dict = dict(row)
+                    for col in appointments_expected:
+                        if col not in row_dict:
+                            if col == 'is_cancelled':
+                                row_dict[col] = 0
+                            else:
+                                row_dict[col] = None
+                    conn.execute(
+                        f"INSERT INTO appointments ({', '.join(appointments_expected)}) VALUES ({', '.join(['?' for _ in appointments_expected])})",
+                        [row_dict[col] for col in appointments_expected]
+                    )
             else:
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS appointments (
@@ -956,6 +999,7 @@ class ScheduleDatabase(DatabaseManager):
                         title TEXT NOT NULL,
                         description TEXT,
                         location TEXT,
+                        is_cancelled INTEGER DEFAULT 0,
                         source_conversation_id TEXT,
                         embedding BLOB,
                         created_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -965,7 +1009,7 @@ class ScheduleDatabase(DatabaseManager):
             # Reminders table migration
             reminders_expected = [
                 'reminder_id', 'timestamp_created', 'due_datetime', 'content', 'priority_level',
-                'completed', 'source_conversation_id', 'embedding', 'created_at'
+                'completed', 'is_completed', 'completed_at', 'source_conversation_id', 'embedding', 'created_at'
             ]
             cur = conn.execute("PRAGMA table_info(reminders)")
             current_columns = [row[1] for row in cur.fetchall()]
@@ -987,6 +1031,8 @@ class ScheduleDatabase(DatabaseManager):
                         content TEXT NOT NULL,
                         priority_level INTEGER DEFAULT 5,
                         completed INTEGER DEFAULT 0,
+                        is_completed INTEGER DEFAULT 0,
+                        completed_at TEXT,
                         source_conversation_id TEXT,
                         embedding BLOB,
                         created_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -996,7 +1042,10 @@ class ScheduleDatabase(DatabaseManager):
                     row_dict = dict(row)
                     for col in reminders_expected:
                         if col not in row_dict:
-                            row_dict[col] = None
+                            if col == 'is_completed':
+                                row_dict[col] = row_dict.get('completed', 0)
+                            else:
+                                row_dict[col] = None
                     conn.execute(
                         f"INSERT INTO reminders ({', '.join(reminders_expected)}) VALUES ({', '.join(['?' for _ in reminders_expected])})",
                         tuple(row_dict[col] for col in reminders_expected)
@@ -1473,19 +1522,8 @@ class ConversationFileMonitor:
         downloads = home / "Downloads"
         directories = []
         
-        # ChatGPT desktop app directories
-        chatgpt_paths = [
-            home / "AppData" / "Roaming" / "ChatGPT" / "chats",  # Windows
-            home / ".config" / "ChatGPT" / "chats",  # Linux
-            home / "Library" / "Application Support" / "ChatGPT" / "chats"  # macOS
-        ]
-        
-        # Claude desktop app directories
-        claude_paths = [
-            home / "AppData" / "Roaming" / "Anthropic" / "Claude" / "conversations",  # Windows
-            home / ".config" / "anthropic-claude" / "conversations",  # Linux
-            home / "Library" / "Application Support" / "Claude" / "conversations"  # macOS
-        ]
+        # NOTE: ChatGPT and Claude desktop apps DO NOT store conversations locally
+        # They are cloud-only applications. Removed these paths after verification.
         
         # LM Studio conversation directories
         lm_studio_paths = [
@@ -1518,6 +1556,15 @@ class ConversationFileMonitor:
         open_webui_paths = [
             home / ".open-webui" / "data" / "chats",  # All platforms
             home / "open-webui" / "data" / "chats",  # Alternative location
+        ]
+        
+        # OpenWebUI database paths (SQLite database)
+        open_webui_db_paths = [
+            home / ".open-webui" / "data" / "webui.db",  # Default location
+            home / "open-webui" / "data" / "webui.db",  # Alternative location
+            home / "OpenWebUI" / "data" / "webui.db",  # Capitalized variant
+            documents / "OpenWebUI" / "data" / "webui.db",  # Documents folder
+            downloads / "OpenWebUI" / "data" / "webui.db",  # Downloads folder
         ]
         
         # Text generation WebUI paths  
@@ -1559,10 +1606,8 @@ class ConversationFileMonitor:
                     directories.append(str(path))
                     logger.info(f"Found {app_name} conversations: {path}")
         
-        # Add paths for each application
+        # Add paths for each application (ChatGPT and Claude removed - cloud-only)
         add_paths_if_exist(lm_studio_paths, "LM Studio")
-        add_paths_if_exist(chatgpt_paths, "ChatGPT")
-        add_paths_if_exist(claude_paths, "Claude")
         add_paths_if_exist(perplexity_paths, "Perplexity")
         add_paths_if_exist(jan_ai_paths, "Jan AI")
         add_paths_if_exist(open_webui_paths, "Open WebUI")
@@ -1575,6 +1620,12 @@ class ConversationFileMonitor:
             if db_path.exists():
                 directories.append(str(db_path))
                 logger.info(f"Found Ollama database: {db_path}")
+        
+        # Special handling for OpenWebUI database
+        for db_path in open_webui_db_paths:
+            if db_path.exists():
+                directories.append(str(db_path))
+                logger.info(f"Found OpenWebUI database: {db_path}")
         
         # Add VS Code workspace storage paths - find specific workspace hashes
         for vscode_base in vscode_base_paths:
@@ -1826,6 +1877,13 @@ class ConversationFileMonitor:
                 conversations.extend(self._extract_ollama_database(file_path))
                 return conversations
             
+            # Special handling for OpenWebUI SQLite database
+            if (file_path.lower().endswith('webui.db') or 
+                (file_path.lower().endswith('.db') and 'openwebui' in file_path.lower()) or
+                (file_path.lower().endswith('.db') and 'open-webui' in file_path.lower())):
+                conversations.extend(self._extract_openwebui_database(file_path))
+                return conversations
+            
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
 
@@ -1881,51 +1939,16 @@ class ConversationFileMonitor:
         try:
             data = json.loads(content)
             if isinstance(data, dict):
-                if 'mapping' in data:
-                    conversations.extend(self._parse_chatgpt_format(data))
-                elif 'messages' in data and self._is_lmstudio_format(data):
+                if self._is_lmstudio_format(data):
                     conversations.extend(self._parse_lmstudio_format(data))
                 elif ('messages' in data or 'chat' in data) and self._is_sillytavern_format(data):
                     conversations.extend(self._parse_sillytavern_format(data))
                 elif ('conversation' in data or ('messages' in data and self._is_gemini_cli_format(data))):
                     conversations.extend(self._parse_gemini_cli_format(data))
-                elif 'messages' in data:
-                    conversations.extend(self._parse_claude_format(data))
             elif isinstance(data, list):
                 conversations.extend(self._parse_simple_array(data))
         except Exception as e:
             logger.error(f"Error handling JSON formats: {e}")
-        return conversations
-    
-    def _parse_chatgpt_format(self, data: Dict) -> List[Dict]:
-        """Parse ChatGPT export format with timestamps"""
-        conversations = []
-        
-        try:
-            if 'mapping' in data:
-                for node_id, node in data['mapping'].items():
-                    if node.get('message') and node['message'].get('content'):
-                        content_parts = node['message']['content'].get('parts', [])
-                        if content_parts:
-                            # Try to get create_time from message
-                            timestamp = None
-                            if 'create_time' in node['message']:
-                                try:
-                                    timestamp = datetime.fromtimestamp(
-                                        int(node['message']['create_time']),
-                                        timezone.utc
-                                    ).isoformat()
-                                except (ValueError, TypeError):
-                                    pass
-                            
-                            conversations.append({
-                                'role': node['message'].get('author', {}).get('role', 'unknown'),
-                                'content': ' '.join(str(part) for part in content_parts if part),
-                                'timestamp': timestamp
-                            })
-        except Exception as e:
-            logger.error(f"Error parsing ChatGPT format: {e}")
-        
         return conversations
     
     def _parse_simple_array(self, data: List) -> List[Dict]:
@@ -1953,43 +1976,6 @@ class ConversationFileMonitor:
                     'content': str(item['content']),
                     'timestamp': timestamp
                 })
-        
-        return conversations
-    
-    def _parse_claude_format(self, data: Dict) -> List[Dict]:
-        """Parse Claude/Anthropic conversation format"""
-        conversations = []
-        
-        try:
-            # Handle both array and object formats
-            messages = data.get('messages', [])
-            if isinstance(messages, dict):
-                messages = messages.values()
-            
-            for msg in messages:
-                if isinstance(msg, dict) and 'content' in msg:
-                    # Try to extract timestamp
-                    timestamp = None
-                    if 'timestamp' in msg:
-                        try:
-                            timestamp = datetime.fromisoformat(msg['timestamp'])
-                        except (ValueError, TypeError):
-                            pass
-                    
-                    conversations.append({
-                        'role': msg.get('role', 'unknown'),
-                        'content': msg['content'],
-                        'timestamp': timestamp.isoformat() if timestamp else None,
-                        'metadata': {
-                            'source': 'Claude',
-                            'model': data.get('model', 'claude'),
-                            'conversation_id': data.get('conversation_id'),
-                            'message_id': msg.get('id'),
-                            'parent_id': msg.get('parent')
-                        }
-                    })
-        except Exception as e:
-            logger.error(f"Error parsing Claude format: {e}")
         
         return conversations
     
@@ -2195,6 +2181,67 @@ class ConversationFileMonitor:
         
         return conversations
     
+    def _extract_openwebui_database(self, db_path: str) -> List[Dict]:
+        """Extract conversations from OpenWebUI SQLite database."""
+        conversations = []
+        try:
+            import sqlite3
+            
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            
+            # Get all chats with their messages
+            cursor.execute("""
+                SELECT c.id, c.title, c.created_at, c.updated_at,
+                       m.id as message_id, m.role, m.content, m.created_at as message_created_at
+                FROM chat c
+                LEFT JOIN message m ON c.id = m.chat_id
+                ORDER BY c.created_at, m.created_at
+            """)
+            
+            rows = cursor.fetchall()
+            conn.close()
+            
+            if not rows:
+                logger.debug(f"No conversations found in OpenWebUI database: {db_path}")
+                return conversations
+            
+            # Convert to conversation format
+            for row in rows:
+                chat_id, title, chat_created_at, chat_updated_at, message_id, role, content, msg_created_at = row
+                
+                if role and content:  # Only add if message exists
+                    # Convert timestamp if needed
+                    timestamp = None
+                    if msg_created_at:
+                        try:
+                            # Parse timestamp (OpenWebUI typically uses ISO format)
+                            if isinstance(msg_created_at, (int, float)):
+                                timestamp = datetime.fromtimestamp(msg_created_at).isoformat()
+                            else:
+                                timestamp = datetime.fromisoformat(str(msg_created_at).replace('Z', '+00:00')).isoformat()
+                        except (ValueError, TypeError):
+                            pass
+                    
+                    conversations.append({
+                        'role': role,
+                        'content': content,
+                        'timestamp': timestamp,
+                        'metadata': {
+                            'source': 'OpenWebUI',
+                            'chat_id': chat_id,
+                            'chat_title': title or f'Chat {chat_id}',
+                            'message_id': message_id
+                        }
+                    })
+            
+            logger.info(f"Extracted {len(conversations)} messages from OpenWebUI database")
+            
+        except Exception as e:
+            logger.error(f"Error extracting OpenWebUI database {db_path}: {e}")
+        
+        return conversations
+    
     def _parse_text_format(self, content: str) -> List[Dict]:
         """Parse text-based conversation formats with timestamp detection"""
         conversations = []
@@ -2359,45 +2406,244 @@ class ConversationFileMonitor:
 
 
 class EmbeddingService:
-    """Handles embedding generation via LM Studio"""
+    """Intelligent embedding service that preserves existing embeddings while optimizing for quality"""
     
-    def __init__(self, base_url: str = "http://localhost:1234"):
-        """Initialize embedding service with LM Studio URL
+    def __init__(self, config: Dict[str, Any] = None):
+        """Initialize embedding service with intelligent configuration
         
         Args:
-            base_url: LM Studio API URL. Defaults to localhost:1234 which is LM Studio's default.
-                     For Ollama, use "http://localhost:11434"
-                     For local LM Studio, keep as is
-                     For other embedding services, provide full base URL
+            config: Optional configuration dictionary. If None, loads from embedding_config.json
         """
-        self.base_url = base_url
-        self.embeddings_endpoint = f"{base_url}/v1/embeddings"
+        if config:
+            self.primary_config = config
+            self.fallback_config = config.get("fallback", {})
+            self.full_config = {"primary": config, "fallback": self.fallback_config}
+        else:
+            self.full_config = self._load_full_config()
+            self.primary_config = self.full_config.get("primary", {})
+            self.fallback_config = self.full_config.get("fallback", {})
+            
+        self.provider_availability = {
+            "lm_studio": None,  # Will be tested on first use
+            "ollama": None,
+            "openai": None
+        }
+        
+        print("🔧 Intelligent Embedding Service Configuration")
+        primary_provider = self.primary_config.get('provider', 'lm_studio')
+        primary_model = self.primary_config.get('model', 'text-embedding-nomic-embed-text-v1.5')
+        fallback_provider = self.fallback_config.get('provider', 'ollama')
+        fallback_model = self.fallback_config.get('model', 'nomic-embed-text')
+        
+        print(f"✅ Primary: {primary_provider} ({primary_model})")
+        print(f"⚡ Fallback: {fallback_provider} ({fallback_model})")
+        print(f"💾 Preserving existing 768D embeddings, using best available for new ones")
+        print("To customize, edit embedding_config.json in the project directory")
     
-    async def generate_embedding(self, text: str, model: str = "text-embedding-nomic-embed-text-v1.5") -> List[float]:
-        """Generate embedding for text using LM Studio"""
+    @property
+    def config(self) -> Dict[str, Any]:
+        """Backward compatibility property - returns primary config as expected format"""
+        return {
+            "provider": self.primary_config.get("provider"),
+            "model": self.primary_config.get("model"),
+            "base_url": self.primary_config.get("base_url"),
+            "api_key": self.primary_config.get("api_key"),
+            "fallback_provider": self.fallback_config.get("provider"),
+            "fallback_model": self.fallback_config.get("model"),
+            "fallback_base_url": self.fallback_config.get("base_url"),
+            "fallback_api_key": self.fallback_config.get("api_key")
+        }
+    
+    def _load_full_config(self) -> dict:
+        """Load complete embedding configuration from JSON file"""
+        try:
+            config_path = Path(__file__).parent / "embedding_config.json"
+            if config_path.exists():
+                with open(config_path, 'r') as f:
+                    config_data = json.load(f)
+                    return config_data.get("embedding_configuration", {})
+        except Exception as e:
+            logger.warning(f"Failed to load embedding config: {e}, using defaults")
+        
+        # Return default configuration
+        return {
+            "primary": {
+                "provider": "lm_studio",
+                "model": "text-embedding-nomic-embed-text-v1.5",
+                "base_url": "http://localhost:1234",
+                "description": "High-quality LM Studio embeddings for semantic search"
+            },
+            "fallback": {
+                "provider": "ollama",
+                "model": "nomic-embed-text", 
+                "base_url": "http://localhost:11434",
+                "description": "Fast local Ollama embeddings"
+            }
+        }
+    
+    @classmethod
+    def create_with_user_config(cls) -> 'EmbeddingService':
+        """Create embedding service with user configuration prompt"""
+        try:
+            print("🔧 Embedding Service Configuration")
+            print("Loading configuration from embedding_config.json...")
+            return cls()  # Use config file
+            
+        except Exception as e:
+            logger.warning(f"Failed to get user config, using defaults: {e}")
+            return cls()  # Fallback to defaults
+
+    async def generate_embedding(self, text: str, model: str = None) -> List[float]:
+        """Generate embedding using intelligent provider selection with preservation strategy"""
+        
+        # Try primary provider first
+        primary_provider = self.primary_config.get("provider", "lm_studio")
+        
+        try:
+            if primary_provider == "lm_studio":
+                result = await self._generate_lm_studio_embedding(text)
+                if result:
+                    self.provider_availability["lm_studio"] = True
+                    return result
+                else:
+                    self.provider_availability["lm_studio"] = False
+                    logger.warning("LM Studio unavailable, trying fallback")
+                    
+            elif primary_provider == "ollama":
+                result = await self._generate_ollama_embedding(text)
+                if result:
+                    self.provider_availability["ollama"] = True
+                    return result
+                else:
+                    self.provider_availability["ollama"] = False
+                    logger.warning("Ollama unavailable, trying fallback")
+                    
+            elif primary_provider == "openai":
+                result = await self._generate_openai_embedding(text)
+                if result:
+                    self.provider_availability["openai"] = True
+                    return result
+                else:
+                    self.provider_availability["openai"] = False
+                    logger.warning("OpenAI unavailable, trying fallback")
+                    
+        except Exception as e:
+            logger.warning(f"Primary provider {primary_provider} failed: {e}")
+        
+        # Try fallback provider
+        fallback_provider = self.fallback_config.get("provider")
+        if fallback_provider and fallback_provider != primary_provider:
+            try:
+                if fallback_provider == "lm_studio":
+                    result = await self._generate_lm_studio_embedding(text, fallback=True)
+                    if result:
+                        self.provider_availability["lm_studio"] = True
+                        logger.info("Using LM Studio fallback for embedding")
+                        return result
+                        
+                elif fallback_provider == "ollama":
+                    result = await self._generate_ollama_embedding(text, fallback=True)
+                    if result:
+                        self.provider_availability["ollama"] = True
+                        logger.info("Using Ollama fallback for embedding")
+                        return result
+                        
+                elif fallback_provider == "openai":
+                    result = await self._generate_openai_embedding(text, fallback=True)
+                    if result:
+                        self.provider_availability["openai"] = True
+                        logger.info("Using OpenAI fallback for embedding")
+                        return result
+                        
+            except Exception as e:
+                logger.error(f"Fallback provider {fallback_provider} also failed: {e}")
+        
+        # If both primary and fallback fail, log the issue
+        logger.error("All embedding providers failed - semantic search will be unavailable")
+        return []
+    
+    async def _generate_ollama_embedding(self, text: str, fallback: bool = False) -> List[float]:
+        """Generate embedding using Ollama"""
+        if fallback:
+            config = self.fallback_config
+        else:
+            config = self.primary_config if self.primary_config.get("provider") == "ollama" else self.fallback_config
+            
+        base_url = config.get("base_url", "http://localhost:11434")
+        model = config.get("model", "nomic-embed-text")
+        
+        async with aiohttp.ClientSession() as session:
+            payload = {"model": model, "prompt": text}
+            async with session.post(f"{base_url}/api/embeddings", json=payload) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data.get("embedding")
+                else:
+                    error_text = await response.text()
+                    logger.error(f"Ollama API error {response.status}: {error_text}")
+                    return None
+    
+    async def _generate_lm_studio_embedding(self, text: str, fallback: bool = False) -> List[float]:
+        """Generate embedding using LM Studio"""
+        if fallback:
+            config = self.fallback_config
+        else:
+            config = self.primary_config if self.primary_config.get("provider") == "lm_studio" else self.fallback_config
+            
+        base_url = config.get("base_url", "http://localhost:1234")
+        model = config.get("model", "text-embedding-nomic-embed-text-v1.5")
         
         try:
             async with aiohttp.ClientSession() as session:
-                payload = {
-                    "model": model,
-                    "input": text,
-                }
-                
-                async with session.post(self.embeddings_endpoint, json=payload) as response:
+                payload = {"model": model, "input": text}
+                async with session.post(f"{base_url}/v1/embeddings", json=payload) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        if data and "data" in data and len(data["data"]) > 0:
+                            embedding = data["data"][0].get("embedding")
+                            if embedding:
+                                return embedding
+                        logger.error(f"Invalid LM Studio response format: {data}")
+                        return None
+                    else:
+                        error_text = await response.text()
+                        logger.error(f"LM Studio API error {response.status}: {error_text}")
+                        return None
+        except Exception as e:
+            logger.error(f"LM Studio embedding error: {e}")
+            return None
+    
+    async def _generate_openai_embedding(self, text: str, fallback: bool = False) -> List[float]:
+        """Generate embedding using OpenAI"""
+        if fallback:
+            config = self.fallback_config
+        else:
+            config = self.primary_config if self.primary_config.get("provider") == "openai" else self.fallback_config
+            
+        api_key = config.get("api_key")
+        if not api_key or api_key == "your-openai-api-key-here":
+            logger.error("OpenAI API key not configured")
+            return None
+            
+        model = config.get("model", "text-embedding-3-small")
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                headers = {"Authorization": f"Bearer {api_key}"}
+                payload = {"model": model, "input": text}
+                async with session.post("https://api.openai.com/v1/embeddings", 
+                                        json=payload, headers=headers) as response:
                     if response.status == 200:
                         data = await response.json()
                         if data and "data" in data and len(data["data"]) > 0:
                             return data["data"][0].get("embedding")
-                        else:
-                            logger.error(f"Invalid response format: {data}")
-                            return None
+                        return None
                     else:
                         error_text = await response.text()
-                        logger.error(f"Embedding API error {response.status}: {error_text}")
+                        logger.error(f"OpenAI API error {response.status}: {error_text}")
                         return None
-        
         except Exception as e:
-            logger.error(f"Error generating embedding: {e}")
+            logger.error(f"OpenAI embedding error: {e}")
             return None
 
 
@@ -2416,8 +2662,8 @@ class PersistentAIMemorySystem:
         self.vscode_db = VSCodeProjectDatabase(str(self.data_dir / "vscode_project.db"))
         self.mcp_db = MCPToolCallDatabase(str(self.data_dir / "mcp_tool_calls.db"))
         
-        # Initialize embedding service
-        self.embedding_service = EmbeddingService()
+        # Initialize embedding service with user-configurable options
+        self.embedding_service = EmbeddingService.create_with_user_config()
         
         # Initialize file monitoring
         self.file_monitor = None
@@ -3443,6 +3689,223 @@ class PersistentAIMemorySystem:
                 )
         except Exception as e:
             logger.error(f"Error adding embedding to project insight {insight_id}: {e}")
+
+    # =============================================================================
+    # ADDITIONAL REMINDER AND APPOINTMENT METHODS
+    # =============================================================================
+    
+    async def get_active_reminders(self, limit: int = 10, days_ahead: int = 30) -> List[Dict]:
+        """Get active (not completed) reminders"""
+        try:
+            from datetime import datetime, timedelta
+            end_date = (datetime.now() + timedelta(days=days_ahead)).isoformat()
+            
+            rows = await self.schedule_db.execute_query(
+                """SELECT * FROM reminders 
+                   WHERE is_completed = 0 AND due_datetime <= ? 
+                   ORDER BY due_datetime ASC LIMIT ?""",
+                (end_date, limit)
+            )
+            return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"Error getting active reminders: {e}")
+            return []
+    
+    async def get_completed_reminders(self, days: int = 7) -> List[Dict]:
+        """Get recently completed reminders"""
+        try:
+            from datetime import datetime, timedelta
+            start_date = (datetime.now() - timedelta(days=days)).isoformat()
+            
+            rows = await self.schedule_db.execute_query(
+                """SELECT * FROM reminders 
+                   WHERE is_completed = 1 AND completed_at >= ? 
+                   ORDER BY completed_at DESC""",
+                (start_date,)
+            )
+            return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"Error getting completed reminders: {e}")
+            return []
+    
+    async def complete_reminder(self, reminder_id: str) -> Dict:
+        """Mark a reminder as completed"""
+        try:
+            from datetime import datetime
+            completed_at = datetime.now().isoformat()
+            
+            await self.schedule_db.execute_update(
+                "UPDATE reminders SET is_completed = 1, completed_at = ? WHERE reminder_id = ?",
+                (completed_at, reminder_id)
+            )
+            return {"status": "success", "reminder_id": reminder_id, "completed_at": completed_at}
+        except Exception as e:
+            logger.error(f"Error completing reminder {reminder_id}: {e}")
+            return {"status": "error", "message": str(e)}
+    
+    async def reschedule_reminder(self, reminder_id: str, new_due_datetime: str) -> Dict:
+        """Update the due date of a reminder"""
+        try:
+            await self.schedule_db.execute_update(
+                "UPDATE reminders SET due_datetime = ? WHERE reminder_id = ?",
+                (new_due_datetime, reminder_id)
+            )
+            return {"status": "success", "reminder_id": reminder_id, "new_due_datetime": new_due_datetime}
+        except Exception as e:
+            logger.error(f"Error rescheduling reminder {reminder_id}: {e}")
+            return {"status": "error", "message": str(e)}
+    
+    async def delete_reminder(self, reminder_id: str) -> Dict:
+        """Permanently delete a reminder"""
+        try:
+            await self.schedule_db.execute_update(
+                "DELETE FROM reminders WHERE reminder_id = ?",
+                (reminder_id,)
+            )
+            return {"status": "success", "reminder_id": reminder_id}
+        except Exception as e:
+            logger.error(f"Error deleting reminder {reminder_id}: {e}")
+            return {"status": "error", "message": str(e)}
+    
+    async def cancel_appointment(self, appointment_id: str) -> Dict:
+        """Cancel a scheduled appointment"""
+        try:
+            await self.schedule_db.execute_update(
+                "UPDATE appointments SET is_cancelled = 1 WHERE appointment_id = ?",
+                (appointment_id,)
+            )
+            return {"status": "success", "appointment_id": appointment_id}
+        except Exception as e:
+            logger.error(f"Error cancelling appointment {appointment_id}: {e}")
+            return {"status": "error", "message": str(e)}
+    
+    async def get_upcoming_appointments(self, limit: int = 5, days_ahead: int = 30) -> List[Dict]:
+        """Get upcoming appointments (not cancelled)"""
+        try:
+            from datetime import datetime, timedelta
+            end_date = (datetime.now() + timedelta(days=days_ahead)).isoformat()
+            
+            rows = await self.schedule_db.execute_query(
+                """SELECT * FROM appointments 
+                   WHERE is_cancelled = 0 AND scheduled_datetime <= ? 
+                   ORDER BY scheduled_datetime ASC LIMIT ?""",
+                (end_date, limit)
+            )
+            return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"Error getting upcoming appointments: {e}")
+            return []
+    
+    async def get_appointments(self, limit: int = 5, days_ahead: int = 30) -> List[Dict]:
+        """Get recent appointments, optionally filtered by date range"""
+        try:
+            from datetime import datetime, timedelta
+            end_date = (datetime.now() + timedelta(days=days_ahead)).isoformat()
+            
+            rows = await self.schedule_db.execute_query(
+                """SELECT * FROM appointments 
+                   WHERE scheduled_datetime <= ? 
+                   ORDER BY scheduled_datetime DESC LIMIT ?""",
+                (end_date, limit)
+            )
+            return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"Error getting appointments: {e}")
+            return []
+    
+    async def store_ai_reflection(self, content: str, reflection_type: str = "general", 
+                                insights: List[str] = None, recommendations: List[str] = None,
+                                confidence_level: float = 0.7, source_period_days: int = None) -> Dict:
+        """Store an AI self-reflection/insight record"""
+        try:
+            reflection_id = await self.mcp_db.store_ai_reflection(
+                content, reflection_type, insights, recommendations, confidence_level, source_period_days
+            )
+            return {"status": "success", "reflection_id": reflection_id}
+        except Exception as e:
+            logger.error(f"Error storing AI reflection: {e}")
+            return {"status": "error", "message": str(e)}
+    
+    async def get_current_time(self) -> Dict:
+        """Get the current server time in ISO format (UTC and local)"""
+        try:
+            from datetime import datetime, timezone
+            import time
+            
+            utc_time = datetime.now(timezone.utc)
+            local_time = datetime.now()
+            timezone_name = time.tzname[0]
+            
+            return {
+                "utc_time": utc_time.isoformat(),
+                "local_time": local_time.isoformat(),
+                "timezone": timezone_name,
+                "timestamp": time.time()
+            }
+        except Exception as e:
+            logger.error(f"Error getting current time: {e}")
+            return {"status": "error", "message": str(e)}
+    
+    async def get_weather_open_meteo(self, latitude: float = None, longitude: float = None,
+                                   timezone_str: str = None, force_refresh: bool = False,
+                                   return_changes_only: bool = False, update_today: bool = True,
+                                   severe_update: bool = False) -> Dict:
+        """Open-Meteo forecast (no API key). Defaults to Motley, MN and caches once per local day."""
+        try:
+            import requests
+            from datetime import datetime, timedelta
+            import json
+            import os
+            
+            # Default location (Motley, MN)
+            lat = latitude if latitude is not None else 46.3436
+            lon = longitude if longitude is not None else -94.6297
+            tz = timezone_str if timezone_str is not None else "America/Chicago"
+            
+            # Create cache directory
+            cache_dir = Path("weather_cache")
+            cache_dir.mkdir(exist_ok=True)
+            
+            today = datetime.now().strftime("%Y-%m-%d")
+            cache_file = cache_dir / f"weather_{today}.json"
+            
+            # Check cache unless forced refresh
+            if not force_refresh and cache_file.exists():
+                with open(cache_file, 'r') as f:
+                    cached_data = json.load(f)
+                
+                if return_changes_only:
+                    return {"status": "cached", "message": "Using cached weather data"}
+                else:
+                    return cached_data
+            
+            # Fetch from Open-Meteo API
+            url = "https://api.open-meteo.com/v1/forecast"
+            params = {
+                "latitude": lat,
+                "longitude": lon,
+                "timezone": tz,
+                "current": ["temperature_2m", "relative_humidity_2m", "weather_code", "wind_speed_10m"],
+                "daily": ["weather_code", "temperature_2m_max", "temperature_2m_min", "precipitation_sum"],
+                "forecast_days": 7
+            }
+            
+            response = requests.get(url, params=params, timeout=10)
+            response.raise_for_status()
+            
+            weather_data = response.json()
+            weather_data["cached_at"] = datetime.now().isoformat()
+            weather_data["location"] = {"latitude": lat, "longitude": lon, "timezone": tz}
+            
+            # Save to cache
+            with open(cache_file, 'w') as f:
+                json.dump(weather_data, f, indent=2)
+            
+            return weather_data
+            
+        except Exception as e:
+            logger.error(f"Error getting weather: {e}")
+            return {"status": "error", "message": str(e)}
 
 
 # =============================================================================

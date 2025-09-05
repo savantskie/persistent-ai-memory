@@ -1,0 +1,48 @@
+{
+  "embedding_configuration": {
+    "primary": {
+      "provider": "lm_studio",
+      "model": "text-embedding-nomic-embed-text-v1.5",
+      "base_url": "http://localhost:1234",
+      "description": "LM Studio with Nomic embeddings - high quality for semantic search"
+    },
+    "fallback": {
+      "provider": "ollama",
+      "model": "nomic-embed-text",
+      "base_url": "http://localhost:11434",
+      "description": "Ollama fallback - fast local embeddings"
+    },
+    "options": {
+      "openai": {
+        "provider": "openai",
+        "model": "text-embedding-3-small",
+        "base_url": "https://api.openai.com/v1",
+        "api_key": "your-openai-api-key-here",
+        "description": "OpenAI embeddings (requires API key)"
+      },
+      "custom": {
+        "provider": "custom",
+        "model": "your-model-name",
+        "base_url": "http://your-server:port",
+        "description": "Custom embedding server"
+      }
+    }
+  },
+  "instructions": {
+    "setup": [
+      "1. Edit this file to configure your preferred embedding providers",
+      "2. Set 'primary' to your main embedding service",
+      "3. Set 'fallback' to a backup service",
+      "4. For Ollama: Make sure qwen2.5:1.5b is pulled (ollama pull qwen2.5:1.5b)",
+      "5. For LM Studio: Load an embedding model",
+      "6. For OpenAI: Add your API key",
+      "7. Restart the memory system to apply changes"
+    ],
+    "providers": {
+      "ollama": "Fastest and most efficient for local use",
+      "lm_studio": "Good balance of speed and quality", 
+      "openai": "High quality but requires internet and API costs",
+      "custom": "For custom embedding servers"
+    }
+  }
+}
