@@ -145,3 +145,6 @@ Thumbs.db
 
 # Allow tracking of ai-memory-mcp_server.py
 !ai-memory-mcp_server.py
+
+# Files to ignore
+persistent-ai-memory.zip
