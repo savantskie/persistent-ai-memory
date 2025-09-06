@@ -189,6 +189,14 @@ class DatabaseMaintenance:
         """Clean up completed and old schedule items"""
         policy = self.retention_policies["schedule"]
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=policy["max_age_days"])
+        now = datetime.now(timezone.utc).isoformat()
+        
+        # Auto-complete overdue reminders (assume they're done) - with 24 hour grace period
+        grace_period_cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+        overdue_completed = await self.memory_system.schedule_db.execute_update(
+            "UPDATE reminders SET completed = 1, completed_at = ? WHERE due_datetime < ? AND completed = 0",
+            (now, grace_period_cutoff.isoformat())
+        )
         
         # Clean old completed appointments
         old_appointments = await self.memory_system.schedule_db.execute_update(
@@ -205,6 +213,7 @@ class DatabaseMaintenance:
         return {
             "policy_applied": policy,
             "cutoff_date": cutoff_date.isoformat(),
+            "overdue_reminders_auto_completed": overdue_completed,
             "old_appointments_deleted": old_appointments,
             "old_reminders_deleted": old_reminders
         }
