@@ -109,6 +109,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+from database_maintenance import DatabaseMaintenance
 
 # Configure logging with minimal output
 logging.basicConfig(level=logging.WARNING)
@@ -1060,6 +1061,8 @@ class ScheduleDatabase(DatabaseManager):
                         content TEXT NOT NULL,
                         priority_level INTEGER DEFAULT 5,
                         completed INTEGER DEFAULT 0,
+                        is_completed INTEGER DEFAULT 0,
+                        completed_at TEXT,
                         source_conversation_id TEXT,
                         embedding BLOB,
                         created_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -3579,13 +3582,15 @@ class PersistentAIMemorySystem:
 
     # System maintenance
     async def run_database_maintenance(self, force: bool = False) -> Dict:
-        """Run maintenance on all databases.
+        """Run maintenance on all databases using the DatabaseMaintenance class.
         
         This includes:
         - Optimizing indexes
         - Cleaning up orphaned records
         - Updating statistics
         - Validating data consistency
+        - Applying retention policies
+        - Removing duplicates
         
         Args:
             force: Whether to force maintenance even if recent
@@ -3593,36 +3598,20 @@ class PersistentAIMemorySystem:
         Returns:
             Dict containing maintenance results
         """
-        results = {
-            "status": "success",
-            "databases": {},
-            "timestamp": get_current_timestamp()
-        }
-        
         try:
-            # Run maintenance on each database
-            results["databases"]["ai_memories"] = await self.ai_memory_db.run_maintenance(force)
-            results["databases"]["conversations"] = await self.conversations_db.run_maintenance(force)
-            results["databases"]["schedule"] = await self.schedule_db.run_maintenance(force)
-            results["databases"]["vscode"] = await self.vscode_db.run_maintenance(force)
-            results["databases"]["mcp"] = await self.mcp_db.run_maintenance(force)
-            
-            # Check for failed maintenance
-            failed = [db for db, result in results["databases"].items() 
-                     if result["status"] == "error"]
-            
-            if failed:
-                results["status"] = "partial"
-                results["message"] = f"Maintenance failed for: {', '.join(failed)}"
-            else:
-                results["message"] = "All maintenance tasks completed successfully"
+            # Create and use DatabaseMaintenance instance
+            maintenance = DatabaseMaintenance(self)
+            results = await maintenance.run_maintenance(force)
+            return results
                 
         except Exception as e:
-            results["status"] = "error"
-            results["message"] = str(e)
+            error_result = {
+                "status": "error",
+                "message": str(e),
+                "timestamp": get_current_timestamp()
+            }
             logger.error(f"System maintenance error: {e}")
-            
-        return results
+            return error_result
     
     # Embedding helper methods (async background tasks)
     async def _add_embedding_to_message(self, message_id: str, content: str):
