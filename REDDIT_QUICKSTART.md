@@ -49,21 +49,37 @@ async def demo():
     memory = PersistentAIMemorySystem()
     
     # Store some memories
-    await memory.store_memory("I love Python programming")
-    await memory.store_memory("I'm learning about AI memory systems")
-    await memory.store_memory("Reddit has great tech communities")
+    await memory.create_memory("I love Python programming", memory_type="personal", importance_level=7)
+    await memory.create_memory("I'm learning about AI memory systems", memory_type="study", importance_level=5)
+    await memory.create_memory("Reddit has great tech communities", memory_type="social", importance_level=3)
     
-    # Search memories
-    results = await memory.search_memories("programming")
-    print(f"Found {len(results)} memories about programming:")
-    for result in results:
-        print(f"- {result['content']}")
+    # Search memories (with filters)
+    search_output = await memory.search_memories(
+        query="programming",
+        memory_type="personal",
+        min_importance=3,
+        max_importance=10
+    )
+    memories = search_output.get("results", [])
+    print(f"Found {len(memories)} personal memories about programming with importance 3-10:")
+    for mem in memories:
+        if isinstance(mem, dict):
+            mem_type = mem.get("type", "unknown")
+            data = mem.get("data", mem)
+            content = data.get("content", str(data))
+            importance = data.get("importance_level", "N/A")
+            print(f"- [{mem_type}] {content} (importance: {importance})")
+        else:
+            print(f"- [unknown] {mem}")
 
 # Run the demo
 asyncio.run(demo())
 ```
 
 Run it: `python test_memory.py`
+---
+**Troubleshooting:**
+If you only see one result, try removing filters (like `memory_type` or `importance_level`) or check your stored memory contents. The search uses semantic similarity and filters, so results may vary based on your query and filters.
 
 ## 🤖 Use with Your AI Assistant
 

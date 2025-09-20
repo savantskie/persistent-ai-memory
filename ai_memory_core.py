@@ -193,7 +193,7 @@ class DatabaseManager:
 
 
 class MCPToolCallDatabase(DatabaseManager):
-    """🔧 NEW: Tracks all MCP tool calls for reflection and debugging"""
+    """Tracks all MCP tool calls for reflection and debugging"""
     
     def __init__(self, db_path: str = "mcp_tool_calls.db"):
         super().__init__(db_path)
@@ -2432,15 +2432,15 @@ class EmbeddingService:
             "openai": None
         }
         
-        print("🔧 Intelligent Embedding Service Configuration")
+    print("Intelligent Embedding Service Configuration")
         primary_provider = self.primary_config.get('provider', 'lm_studio')
         primary_model = self.primary_config.get('model', 'text-embedding-nomic-embed-text-v1.5')
         fallback_provider = self.fallback_config.get('provider', 'ollama')
         fallback_model = self.fallback_config.get('model', 'nomic-embed-text')
         
-        print(f"✅ Primary: {primary_provider} ({primary_model})")
-        print(f"⚡ Fallback: {fallback_provider} ({fallback_model})")
-        print(f"💾 Preserving existing 768D embeddings, using best available for new ones")
+    print(f"Primary: {primary_provider} ({primary_model})")
+    print(f"Fallback: {fallback_provider} ({fallback_model})")
+    print(f"Preserving existing 768D embeddings, using best available for new ones")
         print("To customize, edit embedding_config.json in the project directory")
     
     @property
@@ -2488,7 +2488,7 @@ class EmbeddingService:
     def create_with_user_config(cls) -> 'EmbeddingService':
         """Create embedding service with user configuration prompt"""
         try:
-            print("🔧 Embedding Service Configuration")
+        print("Embedding Service Configuration")
             print("Loading configuration from embedding_config.json...")
             return cls()  # Use config file
             
@@ -3911,7 +3911,7 @@ async def main():
     memory = PersistentAIMemorySystem()
     
     # Example usage
-    print("🧠 Persistent AI Memory System - Enhanced Version")
+    print("Persistent AI Memory System - Enhanced Version")
     print("=" * 50)
     
     # Test system health
@@ -3926,20 +3926,20 @@ async def main():
         importance_level=8,
         tags=["test", "demo"]
     )
-    print(f"✅ Created memory: {result['memory_id']}")
+    print(f"Created memory: {result['memory_id']}")
     
     # Test search
     search_results = await memory.search_memories("test memory", limit=5)
-    print(f"🔍 Found {search_results['count']} memories matching 'test memory'")
+    print(f"Found {search_results['count']} memories matching 'test memory'")
     
-    print("\n✨ Memory system is ready for use!")
-    print("📚 Features available:")
-    print("   • 5 specialized databases")
-    print("   • Vector semantic search")
-    print("   • Real-time file monitoring")
-    print("   • Schedule management")
-    print("   • Project context tracking")
-    print("   • MCP tool call logging")
+    print("\nMemory system is ready for use!")
+    print("Features available:")
+    print("   - 5 specialized databases")
+    print("   - Vector semantic search")
+    print("   - Real-time file monitoring")
+    print("   - Schedule management")
+    print("   - Project context tracking")
+    print("   - MCP tool call logging")
 
 if __name__ == "__main__":
     asyncio.run(main())
