@@ -194,7 +194,7 @@ class DatabaseManager:
 
 
 class MCPToolCallDatabase(DatabaseManager):
-    """🔧 NEW: Tracks all MCP tool calls for reflection and debugging"""
+    """Tracks all MCP tool calls for reflection and debugging"""
     
     def __init__(self, db_path: str = None):
         if db_path is None:
@@ -2530,16 +2530,16 @@ class EmbeddingService:
             "openai": None
         }
         
-        print("🔧 Intelligent Embedding Service Configuration")
-        primary_provider = self.primary_config.get('provider', 'lm_studio')
-        primary_model = self.primary_config.get('model', 'text-embedding-nomic-embed-text-v1.5')
-        fallback_provider = self.fallback_config.get('provider', 'ollama')
-        fallback_model = self.fallback_config.get('model', 'nomic-embed-text')
-        
-        print(f"✅ Primary: {primary_provider} ({primary_model})")
-        print(f"⚡ Fallback: {fallback_provider} ({fallback_model})")
-        print(f"💾 Preserving existing 768D embeddings, using best available for new ones")
-        print("To customize, edit embedding_config.json in the project directory")
+    print("Intelligent Embedding Service Configuration")
+    primary_provider = self.primary_config.get('provider', 'lm_studio')
+    primary_model = self.primary_config.get('model', 'text-embedding-nomic-embed-text-v1.5')
+    fallback_provider = self.fallback_config.get('provider', 'ollama')
+    fallback_model = self.fallback_config.get('model', 'nomic-embed-text')
+    
+    print(f"Primary: {primary_provider} ({primary_model})")
+    print(f"Fallback: {fallback_provider} ({fallback_model})")
+    print(f"Preserving existing 768D embeddings, using best available for new ones")
+    print("To customize, edit embedding_config.json in the project directory")
     
     @property
     def config(self) -> Dict[str, Any]:
@@ -2584,18 +2584,15 @@ class EmbeddingService:
     
     @classmethod
     def create_with_user_config(cls) -> 'EmbeddingService':
-        """Create embedding service with user configuration from settings"""
-        settings = get_settings()
-        
-        # Build config from settings
-        config = {
-            "provider": settings.embedding_provider,
-            "model": settings.embedding_model,
-            "base_url": settings.embedding_url,
-            "api_key": settings.openai_api_key if settings.embedding_provider == "openai" else None
-        }
-        
-        return cls(config)
+        """Create embedding service with user configuration prompt"""
+        try:
+            print("🔧 Embedding Service Configuration")
+            print("Loading configuration from embedding_config.json...")
+            return cls()  # Use config file
+            
+        except Exception as e:
+            logger.warning(f"Failed to get user config, using defaults: {e}")
+            return cls()  # Fallback to defaults
 
     async def generate_embedding(self, text: str, model: str = None) -> List[float]:
         """Generate embedding using intelligent provider selection with preservation strategy"""
@@ -4088,7 +4085,7 @@ async def main():
     memory = PersistentAIMemorySystem()
     
     # Example usage
-    print("🧠 Persistent AI Memory System - Enhanced Version")
+    print("Persistent AI Memory System - Enhanced Version")
     print("=" * 50)
     
     # Test system health
@@ -4103,20 +4100,20 @@ async def main():
         importance_level=8,
         tags=["test", "demo"]
     )
-    print(f"✅ Created memory: {result['memory_id']}")
+    print(f"Created memory: {result['memory_id']}")
     
     # Test search
     search_results = await memory.search_memories("test memory", limit=5)
-    print(f"🔍 Found {search_results['count']} memories matching 'test memory'")
+    print(f"Found {search_results['count']} memories matching 'test memory'")
     
-    print("\n✨ Memory system is ready for use!")
-    print("📚 Features available:")
-    print("   • 5 specialized databases")
-    print("   • Vector semantic search")
-    print("   • Real-time file monitoring")
-    print("   • Schedule management")
-    print("   • Project context tracking")
-    print("   • MCP tool call logging")
+    print("\nMemory system is ready for use!")
+    print("Features available:")
+    print("   - 5 specialized databases")
+    print("   - Vector semantic search")
+    print("   - Real-time file monitoring")
+    print("   - Schedule management")
+    print("   - Project context tracking")
+    print("   - MCP tool call logging")
 
 if __name__ == "__main__":
     asyncio.run(main())
