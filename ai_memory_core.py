@@ -110,6 +110,7 @@ from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from database_maintenance import DatabaseMaintenance
+from settings import get_settings
 
 # Configure logging with minimal output
 logging.basicConfig(level=logging.WARNING)
@@ -142,13 +143,13 @@ class DatabaseManager:
             cursor = conn.execute(query, params)
             return cursor.fetchall()
     
-    async def execute_update(self, query: str, params: Tuple = ()) -> str:
-        """Execute an INSERT/UPDATE/DELETE query and return last row ID"""
+    async def execute_update(self, query: str, params: Tuple = ()) -> int:
+        """Execute an INSERT/UPDATE/DELETE query and return number of affected rows"""
         with self.get_connection() as conn:
             try:
                 cursor = conn.execute(query, params)
                 conn.commit()
-                return str(cursor.lastrowid)
+                return cursor.rowcount
             except sqlite3.Error as e:
                 logger.error(f"Database error: {e}")
                 logger.error(f"Query: {query}")
@@ -195,7 +196,9 @@ class DatabaseManager:
 class MCPToolCallDatabase(DatabaseManager):
     """🔧 NEW: Tracks all MCP tool calls for reflection and debugging"""
     
-    def __init__(self, db_path: str = "mcp_tool_calls.db"):
+    def __init__(self, db_path: str = None):
+        if db_path is None:
+            db_path = str(get_settings().mcp_db_path)
         super().__init__(db_path)
         self.initialize_tables()
     
@@ -476,7 +479,9 @@ class MCPToolCallDatabase(DatabaseManager):
 class ConversationDatabase(DatabaseManager):
     """Manages conversation auto-save database"""
     
-    def __init__(self, db_path: str = "conversations.db"):
+    def __init__(self, db_path: str = None):
+        if db_path is None:
+            db_path = str(get_settings().conversations_db_path)
         super().__init__(db_path)
         self.initialize_tables()
 
@@ -706,7 +711,9 @@ class ConversationDatabase(DatabaseManager):
 class AIMemoryDatabase(DatabaseManager):
     """Manages AI-curated memories database with enhanced operations"""
     
-    def __init__(self, db_path: str = "ai_memories.db"):
+    def __init__(self, db_path: str = None):
+        if db_path is None:
+            db_path = str(get_settings().ai_memories_db_path)
         super().__init__(db_path)
         self.initialize_tables()
 
@@ -901,7 +908,9 @@ class AIMemoryDatabase(DatabaseManager):
 class ScheduleDatabase(DatabaseManager):
     """Manages appointments and reminders database"""
     
-    def __init__(self, db_path: str = "schedule.db"):
+    def __init__(self, db_path: str = None):
+        if db_path is None:
+            db_path = str(get_settings().schedule_db_path)
         super().__init__(db_path)
         self.initialize_tables()
 
@@ -911,7 +920,7 @@ class ScheduleDatabase(DatabaseManager):
             # Appointments table migration
             appointments_expected = [
                 'appointment_id', 'timestamp_created', 'scheduled_datetime', 'title', 'description',
-                'location', 'source_conversation_id', 'embedding', 'created_at'
+                'location', 'cancelled_at', 'completed_at', 'status', 'source_conversation_id', 'embedding', 'created_at'
             ]
             cur = conn.execute("PRAGMA table_info(appointments)")
             current_columns = [row[1] for row in cur.fetchall()]
@@ -933,6 +942,9 @@ class ScheduleDatabase(DatabaseManager):
                         title TEXT NOT NULL,
                         description TEXT,
                         location TEXT,
+                        status TEXT DEFAULT 'scheduled' CHECK(status IN ('scheduled', 'cancelled', 'completed')),
+                        cancelled_at TEXT,
+                        completed_at TEXT,
                         source_conversation_id TEXT,
                         embedding BLOB,
                         created_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -942,55 +954,19 @@ class ScheduleDatabase(DatabaseManager):
                     row_dict = dict(row)
                     for col in appointments_expected:
                         if col not in row_dict:
-                            row_dict[col] = None
+                            if col == 'timestamp_created' or col == 'scheduled_datetime' or col == 'created_at':
+                                row_dict[col] = datetime.now().isoformat()
+                            elif col == 'status':
+                                row_dict[col] = 'scheduled'  # Default status for migrated appointments
+                            elif col == 'cancelled_at' or col == 'completed_at':
+                                row_dict[col] = None  # Default to None for new timestamp columns
+                            else:
+                                row_dict[col] = None
                     conn.execute(
                         f"INSERT INTO appointments ({', '.join(appointments_expected)}) VALUES ({', '.join(['?' for _ in appointments_expected])})",
                         tuple(row_dict[col] for col in appointments_expected)
                     )
                 print(f"Restored {len(old_rows)} appointments after migration.")
-            # Appointments table migration
-            appointments_expected = [
-                'appointment_id', 'timestamp_created', 'scheduled_datetime', 'title', 'description',
-                'location', 'is_cancelled', 'source_conversation_id', 'embedding', 'created_at'
-            ]
-            cur = conn.execute("PRAGMA table_info(appointments)")
-            current_columns = [row[1] for row in cur.fetchall()]
-            needs_migration = False
-            if current_columns:
-                for col in appointments_expected:
-                    if col not in current_columns:
-                        needs_migration = True
-                        break
-            if needs_migration:
-                print("Migrating appointments table to new schema!")
-                old_rows = conn.execute("SELECT * FROM appointments").fetchall()
-                conn.execute("DROP TABLE IF EXISTS appointments")
-                conn.execute("""
-                    CREATE TABLE appointments (
-                        appointment_id TEXT PRIMARY KEY,
-                        timestamp_created TEXT NOT NULL,
-                        scheduled_datetime TEXT NOT NULL,
-                        title TEXT NOT NULL,
-                        description TEXT,
-                        location TEXT,
-                        is_cancelled INTEGER DEFAULT 0,
-                        source_conversation_id TEXT,
-                        embedding BLOB,
-                        created_at TEXT DEFAULT CURRENT_TIMESTAMP
-                    )
-                """)
-                for row in old_rows:
-                    row_dict = dict(row)
-                    for col in appointments_expected:
-                        if col not in row_dict:
-                            if col == 'is_cancelled':
-                                row_dict[col] = 0
-                            else:
-                                row_dict[col] = None
-                    conn.execute(
-                        f"INSERT INTO appointments ({', '.join(appointments_expected)}) VALUES ({', '.join(['?' for _ in appointments_expected])})",
-                        [row_dict[col] for col in appointments_expected]
-                    )
             else:
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS appointments (
@@ -1000,7 +976,9 @@ class ScheduleDatabase(DatabaseManager):
                         title TEXT NOT NULL,
                         description TEXT,
                         location TEXT,
-                        is_cancelled INTEGER DEFAULT 0,
+                        status TEXT DEFAULT 'scheduled' CHECK(status IN ('scheduled', 'cancelled', 'completed')),
+                        cancelled_at TEXT,
+                        completed_at TEXT,
                         source_conversation_id TEXT,
                         embedding BLOB,
                         created_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -1072,8 +1050,28 @@ class ScheduleDatabase(DatabaseManager):
     
     async def create_appointment(self, title: str, scheduled_datetime: str, 
                                description: str = None, location: str = None,
-                               source_conversation_id: str = None) -> str:
-        """Create a new appointment with duplicate detection"""
+                               source_conversation_id: str = None,
+                               recurrence_pattern: str = None,
+                               recurrence_count: int = None,
+                               recurrence_end_date: str = None) -> Union[str, List[str]]:
+        """Create a new appointment, optionally recurring
+        
+        Args:
+            title: Appointment title
+            scheduled_datetime: ISO format datetime for first appointment
+            description: Optional description
+            location: Optional location
+            source_conversation_id: Optional source conversation ID
+            recurrence_pattern: Optional recurrence pattern ('weekly', 'monthly', 'daily')
+            recurrence_count: Optional number of recurrences (including first appointment)
+            recurrence_end_date: Optional end date for recurrences (ISO format)
+            
+        Returns:
+            Single appointment_id if no recurrence, list of appointment_ids if recurring
+        """
+        from dateutil.relativedelta import relativedelta
+        from dateutil.parser import parse as parse_date
+        
         appointment_id = str(uuid.uuid4())
         timestamp = get_current_timestamp()
 
@@ -1093,7 +1091,70 @@ class ScheduleDatabase(DatabaseManager):
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (appointment_id, timestamp, scheduled_datetime, title, description, location, source_conversation_id)
         )
-        return appointment_id
+        
+        appointment_ids = [appointment_id]
+        
+        # Handle recurring appointments
+        if recurrence_pattern and (recurrence_count or recurrence_end_date):
+            try:
+                base_datetime = parse_date(scheduled_datetime)
+                if recurrence_end_date:
+                    end_date = parse_date(recurrence_end_date)
+                else:
+                    end_date = None
+                
+                # Determine the increment pattern
+                if recurrence_pattern.lower() == 'daily':
+                    delta = relativedelta(days=1)
+                elif recurrence_pattern.lower() == 'weekly':
+                    delta = relativedelta(weeks=1)
+                elif recurrence_pattern.lower() == 'monthly':
+                    delta = relativedelta(months=1)
+                elif recurrence_pattern.lower() == 'yearly':
+                    delta = relativedelta(years=1)
+                else:
+                    raise ValueError(f"Unsupported recurrence pattern: {recurrence_pattern}")
+                
+                current_datetime = base_datetime
+                created_count = 1  # Already created the first one
+                
+                # Create recurring appointments
+                while True:
+                    # Check if we should stop
+                    if recurrence_count and created_count >= recurrence_count:
+                        break
+                    if end_date and current_datetime >= end_date:
+                        break
+                    
+                    # Calculate next occurrence
+                    current_datetime += delta
+                    
+                    # Check end date again after increment
+                    if end_date and current_datetime > end_date:
+                        break
+                    
+                    # Skip duplicate detection for recurring appointments
+                    # Create the recurring appointment
+                    recurring_id = str(uuid.uuid4())
+                    recurring_datetime = current_datetime.isoformat()
+                    
+                    await self.execute_update(
+                        """INSERT INTO appointments 
+                           (appointment_id, timestamp_created, scheduled_datetime, title, description, location, source_conversation_id) 
+                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        (recurring_id, timestamp, recurring_datetime, title, description, location, source_conversation_id)
+                    )
+                    
+                    appointment_ids.append(recurring_id)
+                    created_count += 1
+                    
+            except Exception as e:
+                logger.error(f"Error creating recurring appointments: {e}")
+                # Return the first appointment ID even if recurring failed
+                return appointment_id
+        
+        # Return single ID if no recurrence, list if recurring
+        return appointment_id if len(appointment_ids) == 1 else appointment_ids
     
     async def create_reminder(self, content: str, due_datetime: str, 
                             priority_level: int = 5, source_conversation_id: str = None) -> str:
@@ -1142,11 +1203,48 @@ class ScheduleDatabase(DatabaseManager):
         
         return [dict(row) for row in rows]
 
+    async def auto_complete_overdue_reminders(self) -> Dict[str, int]:
+        """
+        Auto-complete overdue reminders at midnight.
+        Returns count of reminders that were auto-completed.
+        """
+        current_time = datetime.now()
+        
+        # Find overdue reminders that aren't already completed
+        overdue_reminders = await self.execute_query(
+            """SELECT reminder_id, content, due_datetime 
+               FROM reminders 
+               WHERE due_datetime < ? 
+               AND completed = 0 
+               AND is_completed = 0""",
+            (current_time.isoformat(),)
+        )
+        
+        completed_count = 0
+        for reminder in overdue_reminders:
+            # Mark as completed
+            await self.execute_update(
+                """UPDATE reminders 
+                   SET completed = 1, is_completed = 1, completed_at = ?
+                   WHERE reminder_id = ?""",
+                (current_time.isoformat(), reminder['reminder_id'])
+            )
+            completed_count += 1
+            
+            logger.info(f"Auto-completed overdue reminder: {reminder['content']}")
+        
+        return {
+            "completed_count": completed_count,
+            "processed_at": current_time.isoformat()
+        }
+
 
 class VSCodeProjectDatabase(DatabaseManager):
     """Manages VS Code project context and development sessions"""
     
-    def __init__(self, db_path: str = "vscode_project.db"):
+    def __init__(self, db_path: str = None):
+        if db_path is None:
+            db_path = str(get_settings().vscode_db_path)
         super().__init__(db_path)
         self.initialize_tables()
 
@@ -2486,15 +2584,18 @@ class EmbeddingService:
     
     @classmethod
     def create_with_user_config(cls) -> 'EmbeddingService':
-        """Create embedding service with user configuration prompt"""
-        try:
-            print("🔧 Embedding Service Configuration")
-            print("Loading configuration from embedding_config.json...")
-            return cls()  # Use config file
-            
-        except Exception as e:
-            logger.warning(f"Failed to get user config, using defaults: {e}")
-            return cls()  # Fallback to defaults
+        """Create embedding service with user configuration from settings"""
+        settings = get_settings()
+        
+        # Build config from settings
+        config = {
+            "provider": settings.embedding_provider,
+            "model": settings.embedding_model,
+            "base_url": settings.embedding_url,
+            "api_key": settings.openai_api_key if settings.embedding_provider == "openai" else None
+        }
+        
+        return cls(config)
 
     async def generate_embedding(self, text: str, model: str = None) -> List[float]:
         """Generate embedding using intelligent provider selection with preservation strategy"""
@@ -2653,17 +2754,24 @@ class EmbeddingService:
 class PersistentAIMemorySystem:
     """Main memory system that coordinates all databases and operations - FULL FEATURED VERSION"""
     
-    def __init__(self, data_dir: str = "memory_data", enable_file_monitoring: bool = True, 
+    def __init__(self, settings=None, enable_file_monitoring: bool = None, 
                  watch_directories: List[str] = None):
-        self.data_dir = Path(data_dir)
-        self.data_dir.mkdir(exist_ok=True)
+        # Use provided settings or get global settings
+        if settings is None:
+            settings = get_settings()
+        self.settings = settings
+        self.data_dir = settings.data_dir
         
-        # Initialize all 5 databases
-        self.conversations_db = ConversationDatabase(str(self.data_dir / "conversations.db"))
-        self.ai_memory_db = AIMemoryDatabase(str(self.data_dir / "ai_memories.db"))
-        self.schedule_db = ScheduleDatabase(str(self.data_dir / "schedule.db"))
-        self.vscode_db = VSCodeProjectDatabase(str(self.data_dir / "vscode_project.db"))
-        self.mcp_db = MCPToolCallDatabase(str(self.data_dir / "mcp_tool_calls.db"))
+        # Override file monitoring setting if explicitly provided
+        if enable_file_monitoring is None:
+            enable_file_monitoring = settings.enable_file_monitoring
+        
+        # Initialize all 5 databases using settings paths
+        self.conversations_db = ConversationDatabase()
+        self.ai_memory_db = AIMemoryDatabase()
+        self.schedule_db = ScheduleDatabase()
+        self.vscode_db = VSCodeProjectDatabase()
+        self.mcp_db = MCPToolCallDatabase()
         
         # Initialize embedding service with user-configurable options
         self.embedding_service = EmbeddingService.create_with_user_config()
@@ -2671,7 +2779,9 @@ class PersistentAIMemorySystem:
         # Initialize file monitoring
         self.file_monitor = None
         if enable_file_monitoring:
-            self.file_monitor = ConversationFileMonitor(self, watch_directories)
+            # Use watch_directories parameter or fall back to settings
+            watch_dirs = watch_directories or settings.watch_directories
+            self.file_monitor = ConversationFileMonitor(self, watch_dirs)
     
     async def start_file_monitoring(self):
         """Start monitoring conversation files"""
@@ -2878,6 +2988,63 @@ class PersistentAIMemorySystem:
         """Get comprehensive tool usage summary"""
         
         return await self.mcp_db.get_tool_usage_summary(days)
+
+    async def get_ai_insights(self, limit: int = 10, reflection_type: str = None, insight_type: str = None) -> Dict:
+        """Unified method to retrieve AI insights and reflections from both MCP and VS Code project databases."""
+        results = []
+        
+        # Get MCP reflections
+        mcp_reflections = await self.mcp_db.get_recent_reflections(limit=limit, reflection_type=reflection_type)
+        for reflection in mcp_reflections:
+            results.append({
+                "source": "mcp_reflection",
+                "reflection_id": reflection.get("reflection_id"),
+                "timestamp": reflection.get("timestamp"),
+                "reflection_type": reflection.get("reflection_type"),
+                "content": reflection.get("content"),
+                "insights": json.loads(reflection["insights"]) if reflection.get("insights") else None,
+                "recommendations": json.loads(reflection["recommendations"]) if reflection.get("recommendations") else None,
+                "confidence_level": reflection.get("confidence_level"),
+                "source_period_days": reflection.get("source_period_days")
+            })
+        
+        # Get VS Code project insights
+        query = "SELECT * FROM project_insights"
+        params = []
+        where_clauses = []
+        
+        if insight_type:
+            where_clauses.append("insight_type = ?")
+            params.append(insight_type)
+        
+        if where_clauses:
+            query += " WHERE " + " AND ".join(where_clauses)
+        
+        query += " ORDER BY timestamp_created DESC LIMIT ?"
+        params.append(limit)
+        
+        project_insights = await self.vscode_db.execute_query(query, tuple(params))
+        for insight in project_insights:
+            results.append({
+                "source": "project_insight",
+                "insight_id": insight.get("insight_id"),
+                "timestamp_created": insight.get("timestamp_created"),
+                "timestamp_updated": insight.get("timestamp_updated"),
+                "insight_type": insight.get("insight_type"),
+                "content": insight.get("content"),
+                "related_files": json.loads(insight["related_files"]) if insight.get("related_files") else None,
+                "importance_level": insight.get("importance_level"),
+                "source_conversation_id": insight.get("source_conversation_id")
+            })
+        
+        # Sort by timestamp (descending)
+        results.sort(key=lambda x: x.get("timestamp", x.get("timestamp_created", "")), reverse=True)
+        
+        return {
+            "status": "success",
+            "count": len(results),
+            "results": results[:limit]
+        }
 
     # =============================================================================
     # ADVANCED SEARCH OPERATIONS
@@ -3757,16 +3924,26 @@ class PersistentAIMemorySystem:
             return {"status": "error", "message": str(e)}
     
     async def cancel_appointment(self, appointment_id: str) -> Dict:
-        """Cancel a scheduled appointment"""
-        try:
-            await self.schedule_db.execute_update(
-                "UPDATE appointments SET is_cancelled = 1 WHERE appointment_id = ?",
-                (appointment_id,)
-            )
-            return {"status": "success", "appointment_id": appointment_id}
-        except Exception as e:
-            logger.error(f"Error cancelling appointment {appointment_id}: {e}")
-            return {"status": "error", "message": str(e)}
+        """Cancel an appointment"""
+        result = await self.schedule_db.execute_update(
+            "UPDATE appointments SET status = 'cancelled', cancelled_at = ? WHERE appointment_id = ?",
+            (get_current_timestamp(), appointment_id)
+        )
+        if result > 0:
+            return {"status": "success", "message": f"Appointment {appointment_id} cancelled"}
+        else:
+            return {"status": "error", "message": "Appointment not found"}
+
+    async def complete_appointment(self, appointment_id: str) -> Dict:
+        """Mark an appointment as completed"""
+        result = await self.schedule_db.execute_update(
+            "UPDATE appointments SET status = 'completed', completed_at = ? WHERE appointment_id = ?",
+            (get_current_timestamp(), appointment_id)
+        )
+        if result > 0:
+            return {"status": "success", "message": f"Appointment {appointment_id} marked as completed"}
+        else:
+            return {"status": "error", "message": "Appointment not found"}
     
     async def get_upcoming_appointments(self, limit: int = 5, days_ahead: int = 30) -> List[Dict]:
         """Get upcoming appointments (not cancelled)"""

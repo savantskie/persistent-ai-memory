@@ -155,14 +155,17 @@ class AIMemoryMCPServer:
             ),
             Tool(
                 name="create_appointment",
-                description="Create an appointment",
+                description="Create an appointment, optionally recurring (e.g., weekly mental health appointments)",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "title": {"type": "string", "description": "Appointment title"},
                         "description": {"type": "string", "description": "Appointment description"},
-                        "scheduled_datetime": {"type": "string", "description": "ISO format datetime"},
-                        "location": {"type": "string", "description": "Location"}
+                        "scheduled_datetime": {"type": "string", "description": "ISO format datetime for first appointment"},
+                        "location": {"type": "string", "description": "Location"},
+                        "recurrence_pattern": {"type": "string", "description": "Recurrence pattern: 'daily', 'weekly', 'monthly', 'yearly'", "enum": ["daily", "weekly", "monthly", "yearly"]},
+                        "recurrence_count": {"type": "integer", "description": "Number of appointments to create (including first), e.g., 12 for 12 weeks", "minimum": 1},
+                        "recurrence_end_date": {"type": "string", "description": "End date for recurrences (ISO format), alternative to recurrence_count"}
                     },
                     "required": ["title", "scheduled_datetime"]
                 }
@@ -305,6 +308,17 @@ class AIMemoryMCPServer:
                     "type": "object",
                     "properties": {
                         "appointment_id": {"type": "string", "description": "ID of the appointment to cancel"}
+                    },
+                    "required": ["appointment_id"]
+                }
+            ),
+            Tool(
+                name="complete_appointment",
+                description="Mark an appointment as completed",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "appointment_id": {"type": "string", "description": "ID of the appointment to complete"}
                     },
                     "required": ["appointment_id"]
                 }
@@ -599,6 +613,8 @@ class AIMemoryMCPServer:
                 result = await self.memory_system.delete_reminder(**arguments)
             elif tool_name == "cancel_appointment":
                 result = await self.memory_system.cancel_appointment(**arguments)
+            elif tool_name == "complete_appointment":
+                result = await self.memory_system.complete_appointment(**arguments)
             elif tool_name == "get_upcoming_appointments":
                 result = await self.memory_system.get_upcoming_appointments(**arguments)
             elif tool_name == "get_appointments":
