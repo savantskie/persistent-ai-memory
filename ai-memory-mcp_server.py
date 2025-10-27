@@ -7,8 +7,6 @@ and the AI Memory System. Provides standardized tools for memory operations
 while maintaining client-specific access controls.
 """
 
-print("AI Memory MCP Server starting...")  # This will show up in stdout immediately
-
 import asyncio
 import json
 import logging
