@@ -1,0 +1,64 @@
+{
+  "llm_provider_configuration": {
+    "llm_provider_type": "ollama",
+    "llm_api_endpoint_url": "http://localhost:11434/api/chat",
+    "llm_model_name": "llama2",
+    "llm_api_key": null,
+    "_comment": "llm_provider_type: 'ollama' or 'openai_compatible'. Set llm_api_key for OpenAI-compatible providers."
+  },
+  "embedding_configuration": {
+    "embedding_api_endpoint_url": "http://localhost:1234/v1/embeddings",
+    "_comment": "URL to embedding service (LM Studio, Ollama, or OpenAI-compatible)"
+  },
+  "relevance_and_retrieval": {
+    "use_llm_for_relevance": false,
+    "llm_skip_relevance_threshold": 0.93,
+    "vector_similarity_threshold": 0.7,
+    "relevance_threshold": 0.7,
+    "embedding_similarity_threshold": 0.97,
+    "use_embeddings_for_deduplication": true,
+    "_comment": "Controls how memories are filtered and ranked for relevance"
+  },
+  "memory_management": {
+    "max_total_memories": 200,
+    "pruning_strategy": "fifo",
+    "min_memory_length": 8,
+    "deduplicate_memories": true,
+    "enable_short_preference_shortcut": true,
+    "_comment": "pruning_strategy: 'fifo' (oldest first) or 'least_relevant' (lowest relevance first)"
+  },
+  "summarization": {
+    "enable_summarization_task": true,
+    "summarization_interval": 7200,
+    "summarization_strategy": "hybrid",
+    "summarization_min_cluster_size": 3,
+    "summarization_min_memory_age_days": 7,
+    "_comment": "summarization_strategy: 'embeddings', 'tags', or 'hybrid'"
+  },
+  "display_and_injection": {
+    "show_status": true,
+    "show_memories": true,
+    "memory_format": "bullet",
+    "_comment": "memory_format: 'bullet', 'numbered', or 'paragraph'"
+  },
+  "filtering": {
+    "filter_trivia": true,
+    "blacklist_topics": null,
+    "whitelist_keywords": null,
+    "enable_error_counter_guard": true,
+    "_comment": "Comma-separated values for blacklist_topics and whitelist_keywords"
+  },
+  "memory_categories": {
+    "enable_identity_memories": true,
+    "enable_preference_memories": true,
+    "enable_goal_memories": true,
+    "enable_relationship_memories": true,
+    "enable_behavior_memories": true,
+    "enable_possession_memories": true
+  },
+  "memory_banks": {
+    "allowed_memory_banks": ["General", "Personal", "Work"],
+    "default_memory_bank": "General",
+    "_comment": "Memory banks for organizing memories by context"
+  }
+}

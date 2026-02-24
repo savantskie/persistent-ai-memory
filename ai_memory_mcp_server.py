@@ -401,6 +401,34 @@ class AIMemoryMCPServer:
                         "severe_update": {"type": "boolean", "description": "If true, shrink the update window to 30 minutes for severe weather.", "default": False}
                     }
                 }
+            ),
+            Tool(
+                name="brave_web_search",
+                description="Perform a general web search using Brave Search API",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Search query"},
+                        "count": {"type": "integer", "description": "Number of results (1-20)", "default": 10},
+                        "country": {"type": "string", "description": "Country code (e.g., US, UK)", "default": "US"},
+                        "language": {"type": "string", "description": "Language code (e.g., en, fr)", "default": "en"}
+                    },
+                    "required": ["query"]
+                }
+            ),
+            Tool(
+                name="brave_local_search",
+                description="Search for local businesses and places using Brave Search API",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Search query (business name, type, etc.)"},
+                        "location": {"type": "string", "description": "Location to search near"},
+                        "count": {"type": "integer", "description": "Number of results (1-20)", "default": 10},
+                        "radius": {"type": "integer", "description": "Search radius in meters", "default": 5000}
+                    },
+                    "required": ["query"]
+                }
             )
         ]
         except Exception as e:
@@ -623,6 +651,10 @@ class AIMemoryMCPServer:
                 result = await self.memory_system.get_current_time()
             elif tool_name == "get_weather_open_meteo":
                 result = await self.memory_system.get_weather_open_meteo(**arguments)
+            elif tool_name == "brave_web_search":
+                result = await self._brave_web_search(**arguments)
+            elif tool_name == "brave_local_search":
+                result = await self._brave_local_search(**arguments)
             # SillyTavern-specific tools
             elif tool_name == "get_character_context":
                 result = await self.memory_system.get_character_context(**arguments)
@@ -734,6 +766,142 @@ class AIMemoryMCPServer:
             
             # Wait 3 hours before next maintenance
             await asyncio.sleep(3 * 60 * 60)
+    
+    async def _brave_web_search(self, query: str, count: int = 10, country: str = "US", language: str = "en") -> Dict:
+        """Perform a general web search using Brave Search API"""
+        logger.info(f"Brave web search called with query: {query}")
+        try:
+            # Get Brave API key from environment
+            api_key = os.getenv("BRAVE_API_KEY")
+            if not api_key:
+                return {
+                    "success": False,
+                    "error": "Brave API key not configured. Please set BRAVE_API_KEY environment variable."
+                }
+
+            # Limit count to reasonable bounds
+            count = min(max(count, 1), 20)
+
+            async with aiohttp.ClientSession() as session:
+                url = "https://api.search.brave.com/res/v1/web/search"
+                params = {
+                    "q": query,
+                    "count": count,
+                    "country": country,
+                    "search_lang": language
+                }
+                headers = {
+                    "Accept": "application/json",
+                    "Accept-Encoding": "gzip",
+                    "X-Subscription-Token": api_key
+                }
+
+                async with session.get(url, params=params, headers=headers) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        results = []
+
+                        # Process web results
+                        if "web" in data and "results" in data["web"]:
+                            for result in data["web"]["results"][:count]:
+                                results.append({
+                                    "title": result.get("title", ""),
+                                    "url": result.get("url", ""),
+                                    "description": result.get("description", ""),
+                                    "type": "web"
+                                })
+
+                        return {
+                            "success": True,
+                            "query": query,
+                            "results": results,
+                            "count": len(results)
+                        }
+                    else:
+                        error_text = await response.text()
+                        return {
+                            "success": False,
+                            "error": f"Brave API error {response.status}: {error_text}"
+                        }
+
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to perform web search: {str(e)}"
+            }
+
+    async def _brave_local_search(self, query: str, location: str = None, count: int = 10, radius: int = 5000) -> Dict:
+        """Search for local businesses and places using Brave Search API"""
+        try:
+            # Get Brave API key from environment
+            api_key = os.getenv("BRAVE_API_KEY")
+            if not api_key:
+                return {
+                    "success": False,
+                    "error": "Brave API key not configured. Please set BRAVE_API_KEY environment variable."
+                }
+
+            # Limit count to reasonable bounds
+            count = min(max(count, 1), 20)
+
+            # Build location-aware query for web search
+            search_query = query
+            if location:
+                search_query = f"{query} near {location}"
+
+            async with aiohttp.ClientSession() as session:
+                url = "https://api.search.brave.com/res/v1/web/search"
+                params = {
+                    "q": search_query,
+                    "count": count,
+                    "country": "US",
+                    "search_lang": "en"
+                }
+                headers = {
+                    "Accept": "application/json",
+                    "Accept-Encoding": "gzip",
+                    "X-Subscription-Token": api_key
+                }
+
+                async with session.get(url, params=params, headers=headers) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        results = []
+
+                        # Process web results that are likely local businesses/places
+                        if "web" in data and "results" in data["web"]:
+                            for result in data["web"]["results"][:count]:
+                                title = result.get("title", "")
+                                description = result.get("description", "")
+                                url_val = result.get("url", "")
+
+                                # Extract potential business info from title and description
+                                results.append({
+                                    "name": title.split(" - ")[0] if " - " in title else title,
+                                    "description": description,
+                                    "url": url_val,
+                                    "type": "local"
+                                })
+
+                        return {
+                            "success": True,
+                            "query": query,
+                            "location": location,
+                            "results": results,
+                            "count": len(results)
+                        }
+                    else:
+                        error_text = await response.text()
+                        return {
+                            "success": False,
+                            "error": f"Brave API error {response.status}: {error_text}"
+                        }
+
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to perform local search: {str(e)}"
+            }
     
     async def cleanup(self):
         """Cleanup resources when server stops"""

@@ -107,22 +107,38 @@ Want to contribute code?
 - Start with [REDDIT_QUICKSTART.md](REDDIT_QUICKSTART.md)
 - Try the examples in the `examples/` directory
 - Read about [MCP (Model Context Protocol)](https://modelcontextprotocol.io/)
+- Check out [TESTING.md](TESTING.md) for guided validation
 
 ### Want to Extend the System?
-- Check out the architecture in [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md)
+- Read [API.md](API.md) for the complete API reference
 - Look at `ai_memory_core.py` for the main classes
+- Check `examples/` for integration patterns
 - The database schemas are documented in the code
 
+### Configuration & Setup
+- [CONFIGURATION.md](CONFIGURATION.md) - All configuration options & environment variables
+- [INSTALL.md](INSTALL.md) - Installation with 4 different methods
+- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Problem solving guide
+
 ### Advanced Usage
-- Custom embedding services
-- Multiple memory databases
-- Integration with other AI tools
+- [DEPLOYMENT.md](DEPLOYMENT.md) - Production setup, Docker, scaling, monitoring
+- Custom embedding services with multi-provider fallback
+- Multiple memory databases with specialization
+- Integration with other AI tools and platforms
 
 ## 🔄 Updates & Changelog
 
 We'll post major updates here. For detailed changes, see the Git commit history.
 
-### Latest Version Features:
+### v1.1.0 Release (February 23, 2026) - Path Independence & Configuration System
+- ✅ **Complete path independence** - Works on any system/directory
+- ✅ **New configuration system** - memory_config.json and embedding_config.json
+- ✅ **Tag management system** - Automatic tag extraction and normalization
+- ✅ **Improved health checks** - Better diagnostics and error messages
+- ✅ **Docker enhancements** - Full container support with synced registries
+- ✅ **Comprehensive documentation** - Dedicated guides for config, testing, troubleshooting, API, deployment
+
+### Earlier Version Features (v1.0.0+):
 - ✅ Cross-platform installation scripts
 - ✅ Comprehensive health checking
 - ✅ MCP server integration

@@ -2530,16 +2530,17 @@ class EmbeddingService:
             "openai": None
         }
         
-    print("Intelligent Embedding Service Configuration")
-    primary_provider = self.primary_config.get('provider', 'lm_studio')
-    primary_model = self.primary_config.get('model', 'text-embedding-nomic-embed-text-v1.5')
-    fallback_provider = self.fallback_config.get('provider', 'ollama')
-    fallback_model = self.fallback_config.get('model', 'nomic-embed-text')
-    
-    print(f"Primary: {primary_provider} ({primary_model})")
-    print(f"Fallback: {fallback_provider} ({fallback_model})")
-    print(f"Preserving existing 768D embeddings, using best available for new ones")
-    print("To customize, edit embedding_config.json in the project directory")
+        # Log configuration
+        print("Intelligent Embedding Service Configuration")
+        primary_provider = self.primary_config.get('provider', 'lm_studio')
+        primary_model = self.primary_config.get('model', 'text-embedding-nomic-embed-text-v1.5')
+        fallback_provider = self.fallback_config.get('provider', 'ollama')
+        fallback_model = self.fallback_config.get('model', 'nomic-embed-text')
+        
+        print(f"Primary: {primary_provider} ({primary_model})")
+        print(f"Fallback: {fallback_provider} ({fallback_model})")
+        print(f"Preserving existing 768D embeddings, using best available for new ones")
+        print("To customize, edit embedding_config.json in the project directory")
     
     @property
     def config(self) -> Dict[str, Any]:
@@ -2758,6 +2759,8 @@ class PersistentAIMemorySystem:
             settings = get_settings()
         self.settings = settings
         self.data_dir = settings.data_dir
+        # Expose memory_data_path for maintenance and other systems
+        self.memory_data_path = Path(settings.data_dir)
         
         # Override file monitoring setting if explicitly provided
         if enable_file_monitoring is None:
