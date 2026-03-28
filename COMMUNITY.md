@@ -130,7 +130,7 @@ Want to contribute code?
 
 We'll post major updates here. For detailed changes, see the Git commit history.
 
-### v1.1.0 Release (February 23, 2026) - Path Independence & Configuration System
+### v1.5.0 Release (March 28, 2026) - Complete Generalization & Full Portability
 - ✅ **Complete path independence** - Works on any system/directory
 - ✅ **New configuration system** - memory_config.json and embedding_config.json
 - ✅ **Tag management system** - Automatic tag extraction and normalization

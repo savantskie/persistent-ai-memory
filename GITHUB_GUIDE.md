@@ -24,9 +24,9 @@ git init
 git add .
 
 # Create initial commit
-git commit -m "Release v1.1.0: Path independence, configuration system, and comprehensive documentation
+git commit -m "Release v1.5.0: Complete generalization, full portability, production-ready
 
-v1.1.0 Release: Path independence, configuration system, and comprehensive documentation
+v1.5.0 Release: Complete generalization, full portability, production-ready
 
 Major Updates:
 ✅ Complete path independence - works on any system in any directory
@@ -78,8 +78,8 @@ After pushing, go to your GitHub repository and:
 2. **Create Releases:**
    - Click "Releases" on the right sidebar
    - Click "Create a new release"
-   - Tag: `v1.1.0`
-   - Title: `Persistent AI Memory System v1.1.0 - Path Independence & Configuration System`
+   - Tag: `v1.5.0`
+   - Title: `Persistent AI Memory System v1.5.0 - Complete Generalization & Full Portability`
    - Description: Copy from the commit message above
 
 3. **Enable Issues and Discussions:**
@@ -117,14 +117,14 @@ git commit -m "Add new feature: semantic tagging assistant"
 git push origin main
 
 # For releases
-git tag v1.1.0
-git push origin v1.1.0
+git tag v1.5.0
+git push origin v1.5.0
 ```
 
 ## 🎯 Repository Best Practices
 
 1. **Keep README.md updated** with new features
-2. **Use semantic versioning** (v1.0.0, v1.1.0, v2.0.0)
+2. **Use semantic versioning** (v1.0.0, v1.5.0, v2.0.0)
 3. **Write clear commit messages** 
 4. **Tag releases** for major milestones
 5. **Respond to issues** from the community

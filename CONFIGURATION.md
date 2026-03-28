@@ -254,7 +254,7 @@ The **embedding_config.json** file configures which service provides vector embe
 
 ### memory_config.json
 
-The **memory_config.json** file (NEW in v1.1.0) provides default configuration for the short-term memory system when running as a standalone tool or without OpenWebUI.
+The **memory_config.json** file provides default configuration for the short-term memory system when running as a standalone tool or without OpenWebUI.
 
 **Location:** `~/.ai_memory/memory_config.json` (optional - system uses defaults if missing)
 
