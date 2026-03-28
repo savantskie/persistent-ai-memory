@@ -130,20 +130,22 @@ Want to contribute code?
 
 We'll post major updates here. For detailed changes, see the Git commit history.
 
-### v1.5.0 Release (March 28, 2026) - Complete Generalization & Full Portability
-- ✅ **Complete path independence** - Works on any system/directory
-- ✅ **New configuration system** - memory_config.json and embedding_config.json
-- ✅ **Tag management system** - Automatic tag extraction and normalization
-- ✅ **Improved health checks** - Better diagnostics and error messages
-- ✅ **Docker enhancements** - Full container support with synced registries
-- ✅ **Comprehensive documentation** - Dedicated guides for config, testing, troubleshooting, API, deployment
+### v1.5.0 Release (March 28, 2026) - OpenWebUI-Native & Multi-Tenant Ready
+- ✅ **OpenWebUI plugin first** - Primary deployment method with intelligent memory extraction/injection
+- ✅ **User ID & Model ID isolation** - Strict multi-tenant support with configurable enforcement
+- ✅ **Complete system generalization** - Generic class names, zero Friday references
+- ✅ **Full path portability** - All hardcoded paths replaced with environment variables
+- ✅ **AI system prompts** - Templates for auto-populating user_id and model_id
+- ✅ **Production-ready** - Enhanced error handling, validation, comprehensive logging
 
-### Earlier Version Features (v1.0.0+):
+### Earlier Version Features (v1.0.0 - v1.1.0):
 - ✅ Cross-platform installation scripts
 - ✅ Comprehensive health checking
 - ✅ MCP server integration
 - ✅ Tool call logging and reflection
 - ✅ Real-time conversation monitoring
+- ✅ Configuration system with JSON defaults
+- ✅ Tag management system
 
 ## 🙏 Thank You!
 

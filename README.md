@@ -13,12 +13,14 @@
 ## 🆕 What's New in v1.5.0 (March 28, 2026)
 
 **Major Architectural Rewrite: OpenWebUI-Native Integration**
-- ✅ **Complete generalization** - all Friday-specific branding removed, fully portable
-- ✅ **OpenWebUI-first design** - AI Memory System now deeply integrated into OpenWebUI via plugin
-- ✅ **Advanced short-term memory** - sophisticated memory extraction, filtering, and injection for chat
-- ✅ **MCP server integration** - streamable/mcpo compatibility for alternative platforms
-- ✅ **Complete path independence** - works on any system in any directory with environment variable control
+- ✅ **OpenWebUI-first design** - AI Memory System now deeply integrated into OpenWebUI via plugin (primary deployment method)
+- ✅ **Advanced short-term memory** - sophisticated memory extraction, filtering, and injection for chat conversations
+- ✅ **User ID & Model ID isolation** - strict multi-tenant support with configurable enforcement for security and tracking
+- ✅ **Complete system portability** - all hardcoded paths replaced with environment variables (works anywhere)
+- ✅ **Generic class names** - removed all Friday-specific branding (FridayMemorySystem → AIMemorySystem)
 - ✅ **Production-ready** - enhanced error handling, validation, and logging throughout
+
+**Upgrade from v1.1.0:** See [CHANGELOG.md](CHANGELOG.md) for migration guide.
 
 ---
 

@@ -24,34 +24,38 @@ git init
 git add .
 
 # Create initial commit
-git commit -m "Release v1.5.0: Complete generalization, full portability, production-ready
+git commit -m "v1.5.0: OpenWebUI-native architecture, multi-tenant isolation, complete portability
 
-v1.5.0 Release: Complete generalization, full portability, production-ready
+## Major Changes from v1.1.0 to v1.5.0:
 
-Major Updates:
-✅ Complete path independence - works on any system in any directory
-✅ New configuration system - memory_config.json + embedding_config.json
-✅ Tag management system - automatic tag extraction and normalization  
-✅ Improved health checks - better diagnostics with helpful error messages
-✅ Docker enhancements - full container support with synced registries
-✅ Comprehensive documentation - 5 new dedicated guides
+🎯 **Architecture Redesign**
+- OpenWebUI plugin as PRIMARY deployment method (not alternative)
+- Two-tier integration: short-term (OpenWebUI) + long-term (MCP server)
+- Simplified deployment for 80% of users
 
-🧠 Core Features:
-- Multi-database architecture with 5 specialized SQLite databases
-- Real-time conversation capture from VS Code and LM Studio  
-- Semantic search with vector embeddings
-- MCP server integration for AI assistants
-- Tool call logging and reflection capabilities
-- Cross-platform file monitoring
-- Comprehensive health monitoring system
-- Environment variable driven configuration
+🔐 **Multi-tenant Isolation & Security**
+- user_id and model_id now REQUIRED on all operations (configurable)
+- Strict memory segregation per user/model combination
+- Audit trail for all memory operations
+- AI system prompt templates included for auto-population
 
-📚 New Documentation:
-- CONFIGURATION.md - Complete configuration reference
-- TESTING.md - Health checks and validation
-- API.md - Full API documentation
-- DEPLOYMENT.md - Production setup and scaling
-- TROUBLESHOOTING.md - Problem solving guide
+📦 **Complete System Portability**
+- Removed ALL hardcoded paths (/media/nate/Friday references gone)
+- Environment variables: AI_MEMORY_DATA_DIR, AI_MEMORY_LOG_DIR
+- Auto-creates directories on first run
+- Works on Linux, macOS, Windows without code changes
+
+✅ **Code Generalization**
+- FridayMemorySystem → AIMemorySystem
+- FridayMemoryMCPServer → AIMemoryMCPServer
+- Zero Friday-specific branding in codebase
+- Generic error messages and documentation
+
+📚 **Enhanced Documentation**
+- System prompts for AI assistants
+- Configuration guide with examples
+- User ID/Model ID setup instructions
+- Migration guide from v1.1.0
 
 Built with determination, debugged with patience, designed for universal deployment.
 
