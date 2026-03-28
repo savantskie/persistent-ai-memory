@@ -9,6 +9,45 @@ Complete API documentation for Persistent AI Memory System.
 
 ---
 
+## ⚠️ CRITICAL: User ID & Model ID Parameters
+
+**ALL memory operations require `user_id` and `model_id` parameters by default.**
+
+This is intentional for security, multi-user support, and tracking. These parameters are **NOT optional** unless explicitly disabled in `memory_config.json`.
+
+### Why These Are Required
+- **Data Isolation** - Memories are strictly isolated per user/model combination
+- **Multi-tenancy** - Multiple users/models can safely share the same system
+- **Audit Trail** - Track exactly which user/model created each memory
+- **Security** - Prevents accidental cross-contamination of memories
+
+### Disabling the Requirement (Optional)
+If you want to use defaults instead, edit `memory_config.json`:
+```json
+{
+  "tool_requirements": {
+    "require_user_id": false,
+    "require_model_id": false,
+    "default_user_id": "default_user",
+    "default_model_id": "default_model"
+  }
+}
+```
+
+When disabled, operations will use the defaults if parameters aren't provided.
+
+### For AI Assistants
+Add this to your AI's **system prompt** so it auto-fills these values:
+```
+When calling memory system tools, always include:
+- user_id (e.g., 'user_name' or 'user_1')
+- model_id (e.g., 'gpt-4' or 'llama-2:7b')
+
+If unknown, use: user_id='default_user', model_id='default_model'
+```
+
+---
+
 ## Core Classes
 
 ### AIMemorySystem

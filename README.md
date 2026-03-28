@@ -1,4 +1,4 @@
-# Persistent AI Memory System v1.1.0
+# Persistent AI Memory System v1.5.0
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
@@ -10,15 +10,15 @@
 
 ---
 
-## 🆕 What's New in v1.1.0 (February 23, 2026)
+## 🆕 What's New in v1.5.0 (March 28, 2026)
 
-**Path Independence & Configuration System Update**
-- ✅ **Complete path independence** - works on any system in any directory
-- ✅ **Configuration system** - `memory_config.json` and `embedding_config.json` for flexible deployments
-- ✅ **Tag management** - automatic tag extraction and normalization
-- ✅ **Improved health checks** - better diagnostics with helpful error messages
-- ✅ **Docker enhancements** - full container support with synced registries
-- ✅ **Documentation** - 5 comprehensive guides (config, testing, API, deployment, troubleshooting)
+**Major Architectural Rewrite: OpenWebUI-Native Integration**
+- ✅ **Complete generalization** - all Friday-specific branding removed, fully portable
+- ✅ **OpenWebUI-first design** - AI Memory System now deeply integrated into OpenWebUI via plugin
+- ✅ **Advanced short-term memory** - sophisticated memory extraction, filtering, and injection for chat
+- ✅ **MCP server integration** - streamable/mcpo compatibility for alternative platforms
+- ✅ **Complete path independence** - works on any system in any directory with environment variable control
+- ✅ **Production-ready** - enhanced error handling, validation, and logging throughout
 
 ---
 
@@ -67,15 +67,17 @@ Expected output:
 
 ## 💡 What This System Does
 
-**Persistent AI Memory** provides:
+**Persistent AI Memory** provides sophisticated memory management for AI assistants:
 
-- 🧠 **Persistent Memory Storage** - SQLite databases for structured, searchable storage
-- 🔍 **Semantic Search** - Vector embeddings for intelligent memory retrieval
-- 💬 **Conversation Tracking** - Multi-platform conversation history capture
-- 🧮 **Tool Call Logging** - Track and analyze AI tool usage patterns
-- 🔄 **Self-Reflection** - AI insights into its own behavior and performance
-- 📱 **Multi-Platform** - Works with LM Studio, VS Code, OpenWebUI, custom applications
-- 🎯 **Easy Integration** - MCP server for any AI assistant compatible with Model Context Protocol
+- 📝 **OpenWebUI Short-Term Memory Plugin** - Intelligent memory extraction and injection directly in chat conversations
+- 🧠 **Persistent Memory Storage** - SQLite databases for structured, searchable long-term memories
+- 🔍 **Semantic Search** - Vector embeddings for intelligent memory retrieval and relevance scoring
+- 💬 **Conversation Tracking** - Multi-platform conversation history capture with context linking
+- 🎯 **Smart Memory Filtering** - Advanced blacklist/whitelist and relevance scoring to inject only what matters
+- 🧮 **Tool Call Logging** - Track and analyze AI tool usage patterns and performance
+- 🔄 **Self-Reflection** - AI insights into its own behavior and memory patterns
+- 📱 **Multi-Platform Support** - Works with OpenWebUI (primary), LM Studio, VS Code, and any MCP-compatible assistant
+- 🎨 **MCP Server** - Standard Model Context Protocol for cross-platform integration
 
 ---
 
@@ -137,27 +139,112 @@ See [CONFIGURATION.md](CONFIGURATION.md) for setup instructions for each provide
 
 ---
 
-## 🔄 Three Ways to Use
+## � Important: User ID & Model ID Requirements
 
-### 1. Standalone Functions
+**All memory operations require `user_id` and `model_id` parameters for data isolation and tracking.**
+
+This ensures:
+- ✅ **Multi-user safety** - Each user's memories are completely isolated
+- ✅ **Model tracking** - Different AI models can maintain separate memories
+- ✅ **Audit trail** - All operations are traceable to the user and model
+
+### Configuration Options
+
+By default, `user_id` and `model_id` are **required**. You can change this in `memory_config.json`:
+
+```json
+{
+  "tool_requirements": {
+    "require_user_id": true,
+    "require_model_id": true,
+    "default_user_id": "default_user",
+    "default_model_id": "default_model"
+  }
+}
+```
+
+- `require_user_id/require_model_id: true` → Strict mode (recommended for production, security-focused, or multi-user systems)
+- `require_user_id/require_model_id: false` → Use defaults instead (simpler for single-user/single-model setups)
+
+### For AI Assistants: Auto-Fill in System Prompt
+
+To make your AI automatically provide these values, add this to its **system prompt**:
+
+```
+When using memory system tools (store_memory, search_memories, etc.), 
+ALWAYS include these parameters:
+- user_id='your_user_identifier' (e.g., 'nate_user_1')
+- model_id='your_model_name' (e.g., 'llama-2:7b' or 'gpt-4')
+
+If the actual values are unknown, use safe defaults:
+- user_id='default_user'
+- model_id='default_model'
+
+This isolates memories per user and tracks which AI model generated each memory.
+```
+
+### Examples
+
+**With user_id and model_id:**
+```python
+# Memories are stored with full isolation
+await system.store_memory(
+    "User likes Python", 
+    user_id="alice", 
+    model_id="gpt-4"
+)
+
+# Search returns only this user's memories for this model
+results = await system.search_memories(
+    "programming", 
+    user_id="alice", 
+    model_id="gpt-4"
+)
+```
+
+**Without strict requirements (if disabled):**
+```python
+# Uses defaults from memory_config.json
+await system.store_memory("User likes Python")  # user_id="default_user", model_id="default_model"
+```
+
+See [API.md](API.md) for complete parameter documentation.
+
+---
+
+## �🔄 Integration Methods (Choose One)
+
+### 1. OpenWebUI Plugin (Recommended)
+**Primary deployment method** - Deep integration for sophisticated memory management:
+- Deploy `ai_memory_short_term.py` as an OpenWebUI Function
+- Automatically extracts memories from conversations
+- Intelligently injects relevant memories before AI response
+- Configurable memory scoring, filtering, and injection preferences
+- No additional setup required beyond copying file into OpenWebUI Functions editor
+
+**Installation:**
+1. In OpenWebUI: **Settings → Functions → +New Function**
+2. Paste entire `ai_memory_short_term.py` file
+3. Set trigger to `Inlet` (runs before model response)
+4. Configure memory preferences via function settings
+
+### 2. MCP Server (Alternative Platforms)
+Use with any MCP-compatible AI assistant (Claude, custom integrations, etc.):
+```bash
+# Via mcpo
+python -m ai_memory_mcp_server
+
+# Or make streamable for OpenWebUI's alternative integration
+# (OpenWebUI supports both plugin and streamable MCP methods)
+```
+
+### 3. Standalone Library (Custom Implementations)
 Use memory capabilities directly in your Python code:
 ```python
 from ai_memory_core import AIMemorySystem
-system = await AIMemorySystem.create()
-await system.store_memory("Important information")
-results = await system.search_memories("query")
-```
-
-### 2. OpenWebUI Plugin
-Deploy as an OpenWebUI filter to auto-inject memories into chat:
-- Automatically extracts memories from conversations
-- Injects relevant memories before responding
-- Configurable via OpenWebUI filter settings
-
-### 3. MCP Server
-Use with any MCP-compatible AI assistant (Claude, custom tools, etc.):
-```bash
-python -m ai_memory_mcp_server
+system = AIMemorySystem()
+await system.store_memory("Important information", user_id="user1", model_id="model1")
+results = await system.search_memories("query", user_id="user1", model_id="model1")
 ```
 
 ---
@@ -185,7 +272,28 @@ Full API reference: [API.md](API.md)
 
 ---
 
-## 🤝 Contributing
+## � System Sophistication
+
+This is a significantly enhanced version of traditional memory systems:
+
+| Feature | Traditional | AI Memory System |
+|---------|-------------|------------------|
+| Memory Extraction | Manual/Static | LLM-powered intelligent extraction |
+| Filtering | Simple keyword matching | Multi-layer semantic + relevance scoring |
+| Memory Injection | All available memories | Smart filtering - only inject relevant |
+| Duplicate Prevention | Text matching | Embedding-based semantic deduplication |
+| Importance Scoring | Not tracked | Dynamic importance analysis |
+| Memory Normalization | N/A | Automatic format standardization |
+| Context Awareness | Limited | Full conversation context integration |
+| Tool Integration | Basic logging | Deep reflection and pattern analysis |
+| Error Handling | Minimal | Comprehensive validation and recovery |
+| Performance | N/A | Optimized with async operations |
+
+**Result:** An AI assistant that truly learns from and adapts to your preferences over time.
+
+---
+
+## �🤝 Contributing
 
 We welcome contributions! See [CONTRIBUTORS.md](CONTRIBUTORS.md) for:
 - Development setup instructions

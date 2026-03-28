@@ -2,14 +2,14 @@
 """Live test of file monitoring with conversation import"""
 
 import asyncio
-from ai_memory_core import PersistentAIMemorySystem
+from ai_memory_core import AIMemorySystem
 
 async def test_live_import():
     print('🎯 Testing Live Conversation Import')
     print('=' * 50)
     
     # Initialize with file monitoring
-    memory_system = PersistentAIMemorySystem(enable_file_monitoring=True)
+    memory_system = AIMemorySystem(enable_file_monitoring=True)
     
     print('📊 Before import - checking current database...')
     health_before = await memory_system.get_system_health()

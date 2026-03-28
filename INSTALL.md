@@ -2,7 +2,31 @@
 
 This guide provides multiple installation methods for the Persistent AI Memory System.
 
-## 🚀 Quick Installation Methods
+## 🚀 Primary Integration: OpenWebUI Plugin
+
+**Most users should deploy the system as an OpenWebUI Function:**
+
+1. **Copy the plugin file:**
+   - Navigate to OpenWebUI → **Settings → Functions → +New Function**
+   - Select "Create from Python Editor"
+   - Paste entire contents of `ai_memory_short_term.py`
+   - Click Save
+
+2. **Configure settings:**
+   - Set trigger to `Inlet` (enables memory injection)
+   - Adjust memory scoring and filtering preferences
+   - Enable/disable memory display in responses
+
+3. **Verify it works:**
+   - Start a conversation
+   - Check that memories are being extracted
+   - Verify relevant memories appear when appropriate
+
+**That's it!** The system is now integrated into your OpenWebUI chat.
+
+---
+
+## 💻 System Installation (For Development or MCP Server)
 
 ### Method 1: One-Command Installation (Linux/macOS)
 
@@ -68,8 +92,8 @@ python tests/test_health_check.py
 # Test basic functionality
 python examples/basic_usage.py
 
-# Check if all databases are created
-python -c "import asyncio; from ai_memory_core import PersistentAIMemorySystem; asyncio.run(PersistentAIMemorySystem().get_system_health())"
+# Verify core system initializes
+python -c "from ai_memory_core import AIMemorySystem; system = AIMemorySystem(); print('✅ System initialized successfully')"
 ```
 
 ## 🛠️ Development Installation
@@ -86,26 +110,37 @@ This installs additional development dependencies for testing and code quality.
 
 ## 🔧 Configuration
 
-The system works out-of-the-box with sensible defaults, but you can customize:
+The system works out-of-the-box with sensible defaults, but you can customize via environment variables:
 
-### LM Studio Integration
+### Environment Variables
 
-If you have LM Studio running locally:
-```python
-from ai_memory_core import PersistentAIMemorySystem
+```bash
+# Data storage location
+export AI_MEMORY_DATA_DIR="/path/to/your/data"
 
-memory = PersistentAIMemorySystem(
-    embedding_service_url="http://localhost:1234/v1/embeddings"
-)
+# Logs location
+export AI_MEMORY_LOG_DIR="/path/to/your/logs"
+
+# Embedding provider (optional)
+export OPENAI_API_KEY="sk-..."
+export OLLAMA_API_URL="http://localhost:11434"
 ```
 
-### Custom Database Location
+### Using in Python Code
 
 ```python
-memory = PersistentAIMemorySystem(
-    db_path="/path/to/your/custom/memory.db"
-)
+from ai_memory_core import AIMemorySystem
+
+# Create system with default settings
+system = AIMemorySystem()
+
+# Or customize paths via environment variables
+import os
+os.environ["AI_MEMORY_DATA_DIR"] = "/custom/path"
+system = AIMemorySystem()
 ```
+
+For detailed configuration options, see [CONFIGURATION.md](CONFIGURATION.md).
 
 ## 🚨 Troubleshooting
 

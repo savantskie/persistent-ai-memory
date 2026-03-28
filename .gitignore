@@ -130,6 +130,8 @@ dmypy.json
 
 # Memory system databases
 memory_data/
+logs/
+weather_directory/
 *.db
 
 # IDE files

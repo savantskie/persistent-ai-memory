@@ -157,11 +157,11 @@ async def test_database_initialization():
         
         try:
             # Import here to ensure all checks pass first
-            from ai_memory_core import PersistentAIMemorySystem
+            from ai_memory_core import AIMemorySystem
             
             # Try to initialize the system (it will use default paths by default)
-            print_info("Initializing PersistentAIMemorySystem...")
-            system = PersistentAIMemorySystem()
+            print_info("Initializing AIMemorySystem...")
+            system = AIMemorySystem()
             
             # Check if databases can be accessed
             try:
@@ -187,7 +187,7 @@ async def test_database_initialization():
                 return False
                 
         except Exception as e:
-            print_error(f"Failed to initialize PersistentAIMemorySystem: {e}")
+            print_error(f"Failed to initialize AIMemorySystem: {e}")
             import traceback
             print(f"{RED}{traceback.format_exc()}{RESET}")
             return False

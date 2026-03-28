@@ -6,7 +6,7 @@ Test script for MCP Tool Call Logger functionality
 import asyncio
 import json
 from datetime import datetime
-from ai_memory_core import PersistentAIMemorySystem
+from ai_memory_core import AIMemorySystem
 from mcp_server import PersistentAIMemoryMCPServer
 
 async def test_tool_call_logging():

@@ -14,9 +14,9 @@
 
 ## Step 2: Prepare Your Local Repository
 
-Open PowerShell in the `f:\Friday\persistent-ai-memory` directory and run:
+Open a terminal in your `persistent-ai-memory` project directory and run:
 
-```powershell
+```bash
 # Initialize git repository
 git init
 

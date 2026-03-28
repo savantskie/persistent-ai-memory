@@ -2,12 +2,12 @@
 """Test the new database maintenance system"""
 
 import asyncio
-from ai_memory_core import PersistentAIMemorySystem
+from ai_memory_core import AIMemorySystem
 
 async def test_maintenance():
     print("🧹 Testing Database Maintenance System...")
     
-    memory = PersistentAIMemorySystem()
+    memory = AIMemorySystem()
     
     # Get system health before maintenance
     print("\n📊 System Health Before Maintenance:")

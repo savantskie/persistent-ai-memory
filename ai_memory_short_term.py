@@ -1,12 +1,12 @@
 """
-title: Persistent AI Short Term Memory v1.0.0 - Universal short term memory system
-author: Nathan (Original Friday impl)
-version: 1.0.0
+title: AI Short Term Memory v0.0.4 - Short term memory plugin for OpenWebUI
+author: Nate
+version: 0.0.21
 ---
 
 # Overview
 
-Persistent AI Short Term Memory is a sophisticated plugin that provides **persistent, personalized memory capabilities** for Large Language Models (LLMs) within OpenWebUI. It enables LLMs to remember key information about users across separate conversations, creating a more natural and personalized experience.
+Friday Short Term Memory is a sophisticated plugin that provides **persistent, personalized memory capabilities** for Large Language Models (LLMs) within OpenWebUI. It enables LLMs to remember key information about users across separate conversations, creating a more natural and personalized experience.
 
 The system **dynamically extracts, filters, stores, and retrieves** user-specific information from conversations, then intelligently injects relevant memories into future LLM prompts.
 
@@ -30,7 +30,7 @@ The system **dynamically extracts, filters, stores, and retrieves** user-specifi
    - Optional LLM-based relevance scoring for highest accuracy when needed
    - Performance optimizations to reduce unnecessary LLM calls
 
-4. **Universal Short Term Memory Management**
+4. **AI Short Term Memory Management**
    - Smart clustering and summarization of related older memories to prevent clutter
    - Intelligent pruning strategies when memory limits are reached
    - Configurable background tasks for maintenance operations
@@ -126,18 +126,10 @@ The system **dynamically extracts, filters, stores, and retrieves** user-specifi
 
 ---
 
-# Operation Modes
-
-This system supports three operational modes:
-
-1. **Standalone Functions**: Core memory extraction/injection functions work independently without any UI/platform dependency
-2. **OpenWebUI Integration** (Optional): Acts as OpenWebUI filter/tool, integrates with persistent-ai-memory for memory operations
-3. **Other Systems**: Can be adapted to integrate with any system needing memory extraction/injection (Discord, Slack, custom apps, etc.)
-
----
-
-Persistent AI Short Term Memory enables **dynamic, evolving, personalized memory** for LLMs, making conversations more natural and responsive over time.
+AI Short Term Memory enables **dynamic, evolving, personalized memory** for LLMs in OpenWebUI, making conversations more natural and responsive over time.
 """
+
+import sys
 
 import json
 import copy  # Add deepcopy import
@@ -158,6 +150,8 @@ import os
 import pickle
 import aiohttp
 import numpy as np
+from friday_memory_normalization_migration import MemoryNormalizationMigration
+from utils import get_log_dir, get_memory_data_dir, ensure_directories
 
 # Embedding model imports
 from sentence_transformers import SentenceTransformer
@@ -169,26 +163,19 @@ from fastapi.requests import Request
 from pydantic import BaseModel, Field, model_validator, field_validator, validator
 
 # Updated imports for OpenWebUI 0.5+
-# These are optional - the system can function without them as standalone functions
-OPENWEBUI_AVAILABLE = False
-try:
-    from open_webui.routers.memories import (  # type: ignore
-        add_memory,
-        AddMemoryForm,
-        query_memory,
-        QueryMemoryForm,
-        delete_memory_by_id,
-        Memories,
-    )
-    from open_webui.models.users import Users  # type: ignore
-    from open_webui.main import app as webui_app  # type: ignore
-    OPENWEBUI_AVAILABLE = True
-except ImportError:
-    # OpenWebUI not available - system will work in standalone mode
-    pass
+from open_webui.routers.memories import (  # type: ignore
+    add_memory,
+    AddMemoryForm,
+    query_memory,
+    QueryMemoryForm,
+    delete_memory_by_id,
+)
+from open_webui.models.memories import Memories  # type: ignore - Import directly from models where it's defined
+from open_webui.models.users import Users  # type: ignore
+from open_webui.main import app as webui_app  # type: ignore
 
-# Set up logging
-logger = logging.getLogger("persistent_ai.short_term_memory")
+# Set up logging (before Friday import)
+logger = logging.getLogger("openwebui.plugins.adaptive_memory")
 handler = logging.StreamHandler()
 inlet_outlet_logger = None  # Will be initialized below
 
@@ -225,32 +212,29 @@ logger.addHandler(handler)
 try:
     import os
 
-    # Log directory - from environment variable or default
-    log_dir = os.path.expandvars(os.getenv("AI_MEMORY_LOG_DIR", 
-                                            os.path.join(os.path.expanduser("~"), 
-                                                         ".ai_memory", "logs")))
+    log_dir = get_log_dir()
     os.makedirs(log_dir, exist_ok=True)
 
     # Main short-term memory log file
     file_handler = logging.FileHandler(
-        os.path.join(log_dir, "short_term_memory.log"), encoding="utf-8"
+        os.path.join(log_dir, "friday_short_term_memory.log"), encoding="utf-8"
     )
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
     logger.info(
-        f"✓ FileHandler initialized - logging to {os.path.join(log_dir, 'short_term_memory.log')}"
+        f"✓ FileHandler initialized - logging to {os.path.join(log_dir, 'friday_short_term_memory.log')}"
     )
     
     # Add dedicated inlet/outlet debug handler
     inlet_outlet_handler = logging.FileHandler(
-        os.path.join(log_dir, "short_term_inlet_outlet.log"), encoding="utf-8"
+        os.path.join(log_dir, "friday_short_term_inlet_outlet.log"), encoding="utf-8"
     )
     inlet_outlet_handler.setFormatter(formatter)
-    inlet_outlet_logger = logging.getLogger("openwebui.plugins.short_term_memory.flow")
+    inlet_outlet_logger = logging.getLogger("openwebui.plugins.adaptive_memory.flow")
     inlet_outlet_logger.addHandler(inlet_outlet_handler)
     inlet_outlet_logger.setLevel(logging.DEBUG)
     inlet_outlet_logger.propagate = False
-    logger.info(f"✓ Inlet/Outlet flow logger initialized - logging to {os.path.join(log_dir, 'short_term_inlet_outlet.log')}")
+    logger.info("✓ Inlet/Outlet flow logger initialized - logging to friday_short_term_inlet_outlet.log")
 except Exception as e:
     inlet_outlet_logger = logger  # Fallback to main logger
     logger.error(f"Failed to create file logger: {e}")
@@ -263,14 +247,11 @@ try:
     import os
     from datetime import datetime
     
-    # Error log directory - use same logs directory
-    error_log_dir = os.path.expandvars(os.getenv("AI_MEMORY_LOG_DIR", 
-                                                   os.path.join(os.path.expanduser("~"), 
-                                                                ".ai_memory", "logs")))
+    error_log_dir = get_log_dir()
     os.makedirs(error_log_dir, exist_ok=True)
     
     # Use consistent filename for easier tracking
-    error_log_path = os.path.join(error_log_dir, "short_term_errors.log")
+    error_log_path = os.path.join(error_log_dir, "friday_short_term_errors.log")
     
     error_logger = logging.getLogger("openwebui.plugins.adaptive_memory.errors")
     error_file_handler = logging.FileHandler(error_log_path, encoding="utf-8")
@@ -279,31 +260,19 @@ try:
     error_logger.setLevel(logging.ERROR)
     error_logger.propagate = False
     
-    logger.info(f"✓ Error logger initialized - writing to short_term_errors.log")
+    logger.info(f"✓ Error logger initialized - writing to friday_short_term_errors.log")
 except Exception as e:
     error_logger = None
     logger.error(f"Failed to create error logger: {e}")
 
-# Optional long-term memory system integration (for promotion of old memories)
-# This allows integration with persistent-ai-memory's ConversationDatabase
-# If not available, the short-term system functions independently
-PERSISTENT_AI_MEMORY_PATH = os.getenv("PERSISTENT_AI_MEMORY_PATH", None)
-PERSISTENT_AI_MEMORY_AVAILABLE = False
+# AI Memory System integration (non-blocking)
+try:
+    from ai_memory_core import ConversationDatabase
 
-if PERSISTENT_AI_MEMORY_PATH:
-    try:
-        import sys
-        if PERSISTENT_AI_MEMORY_PATH not in sys.path:
-            sys.path.insert(0, PERSISTENT_AI_MEMORY_PATH)
-        from ai_memory_core import PersistentAIMemorySystem
-        PERSISTENT_AI_MEMORY_AVAILABLE = True
-        logger.info("✓ Persistent AI Memory System available for memory promotion")
-    except ImportError as e:
-        logger.warning(f"Persistent AI Memory System not available: {e}. Memory promotion will be skipped.")
-        PERSISTENT_AI_MEMORY_AVAILABLE = False
-else:
-    logger.info("Persistent AI Memory System path not configured. Memory promotion disabled.")
-    PERSISTENT_AI_MEMORY_AVAILABLE = False
+    AI_MEMORY_SYSTEM_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"AI Memory System not available: {e}. Linking will be skipped.")
+    AI_MEMORY_SYSTEM_AVAILABLE = False
 
 
 class MemoryOperation(BaseModel):
@@ -315,6 +284,8 @@ class MemoryOperation(BaseModel):
     tags: List[str] = []
     memory_bank: Optional[str] = None  # NEW – bank assignment
     model_card_name: Optional[str] = None  # Model card name (persona) for memory separation
+    relevance_score: Optional[int] = None  # Phase 1B: LLM-extracted relevance (1-10)
+    extracted_user_name: Optional[str] = None  # Phase 1B: User name extracted from content
 
 
 class ImageManager:
@@ -605,96 +576,6 @@ class Filter:
     _embedding_model = None
     _memory_embeddings = {}
     _relevance_cache = {}
-    _memory_to_cache_keys = {}  # Reverse index: memory_id -> set of cache keys for precise invalidation
-
-    # ========================================================================
-    # HELPER: Configuration loading functions
-    # ========================================================================
-    @staticmethod
-    def _get_memory_config_path() -> str:
-        """
-        Get path to memory_config.json, checking multiple locations.
-        
-        Returns:
-            Path to config file, or None if not found
-        """
-        # Check in current directory and common installation paths
-        config_paths = [
-            "memory_config.json",
-            os.path.join(os.path.dirname(__file__), "memory_config.json"),
-            os.path.expanduser("~/.ai_memory/memory_config.json"),
-        ]
-        
-        for path in config_paths:
-            if os.path.exists(path):
-                return path
-        return None
-
-    @staticmethod
-    def _load_memory_config() -> Dict[str, Any]:
-        """
-        Load memory configuration from memory_config.json.
-        
-        Returns:
-            Dictionary with configuration, or empty dict if file not found
-        """
-        config_path = Filter._get_memory_config_path()
-        if not config_path:
-            logger.debug("memory_config.json not found, using default valve values")
-            return {}
-        
-        try:
-            with open(config_path, 'r') as f:
-                config = json.load(f)
-            logger.info(f"✓ Loaded memory configuration from {config_path}")
-            return config
-        except Exception as e:
-            logger.error(f"Error loading memory_config.json: {e}, using defaults")
-            return {}
-
-    @staticmethod
-    def _get_embedding_cache_path() -> str:
-        """
-        Get path to embedding cache database.
-        Uses embedding_config.json if available, otherwise defaults to ~/.ai_memory/memory_embeddings.db
-        
-        Returns:
-            Path to embedding cache database
-        """
-        # Try to load from embedding_config.json
-        try:
-            config_path = "embedding_config.json"
-            if os.path.exists(config_path):
-                with open(config_path, 'r') as f:
-                    config = json.load(f)
-                    if "embedding_cache_path" in config:
-                        return config["embedding_cache_path"]
-        except Exception as e:
-            logger.debug(f"Could not read embedding_cache_path from embedding_config.json: {e}")
-        
-        # Default to ~/.ai_memory/memory_embeddings.db
-        default_path = os.path.join(
-            os.path.expanduser("~"),
-            ".ai_memory",
-            "memory_embeddings.db"
-        )
-        return default_path
-
-    @staticmethod
-    def _get_error_log_dir() -> str:
-        """
-        Get error logging directory from environment variable or default.
-        
-        Returns:
-            Path to error log directory
-        """
-        log_dir = os.path.expandvars(
-            os.getenv(
-                "AI_MEMORY_LOG_DIR",
-                os.path.join(os.path.expanduser("~"), ".ai_memory", "logs")
-            )
-        )
-        return log_dir
 
     # ========================================================================
     # NESTED: EmbeddingCache - Persistent SQLite-based embedding cache
@@ -702,10 +583,11 @@ class Filter:
     class EmbeddingCache:
         """Persistent SQLite-based embedding cache for memory embeddings"""
 
-        def __init__(self, db_path: str = None):
-            # If db_path not provided, use the helper function to get it from config or default
+        def __init__(
+            self, db_path: str = None
+        ):
             if db_path is None:
-                db_path = Filter._get_embedding_cache_path()
+                db_path = os.path.join(get_memory_data_dir(), "memory_embeddings.db")
             self.db_path = db_path
             self.conn = None
             self._init_db()
@@ -1109,93 +991,87 @@ What details are relevant to remember about this image? Describe only the key vi
             self._relevance_cache = {}
         return self._relevance_cache
 
-    @property
-    def memory_to_cache_keys(self):
-        if not hasattr(self, "_memory_to_cache_keys") or self._memory_to_cache_keys is None:
-            self._memory_to_cache_keys = {}
-        return self._memory_to_cache_keys
-
     class Valves(BaseModel):
         """Configuration valves for the filter"""
 
         # ------ Begin Background Task Management Configuration ------
         enable_summarization_task: bool = Field(
             default=True,
-            description="Enable or disable the background memory summarization task",
+            description="Turn on/off the background task that periodically combines similar memories into single summaries",
         )
         summarization_interval: int = Field(
             default=7200,  # 2 hours performance setting
-            description="Interval in seconds between memory summarization runs",
+            description="How often (in seconds) to run the memory summarization task. Default 7200 = every 2 hours",
         )
 
         enable_error_logging_task: bool = Field(
             default=True,
-            description="Enable or disable the background error counter logging task",
+            description="Turn on/off background tracking of errors that happen inside the memory system",
         )
         error_logging_interval: int = Field(
             default=1800,  # 30 minutes performance setting
-            description="Interval in seconds between error counter log entries",
+            description="How often (in seconds) to log error counts. Default 1800 = every 30 minutes",
         )
 
         enable_date_update_task: bool = Field(
             default=True,
-            description="Enable or disable the background date update task",
+            description="Turn on/off the background task that keeps the system's sense of the current date fresh",
         )
         date_update_interval: int = Field(
             default=3600,  # 1 hour performance setting
-            description="Interval in seconds between date information updates",
+            description="How often (in seconds) to refresh the date/time info. Default 3600 = every hour",
         )
 
         enable_model_discovery_task: bool = Field(
             default=True,
-            description="Enable or disable the background model discovery task",
+            description="Turn on/off automatic detection of what LLM models are currently available",
         )
         enable_memory_promotion_task: bool = Field(
             default=True,
-            description="Enable or disable the background memory promotion task (automatic transfer of old memories from short-term to long-term storage)",
+            description="Turn on/off automatic moving of old short-term memories into long-term storage",
         )
         memory_promotion_interval: int = Field(
             default=86400,  # 24 hours
-            description="Frequency in seconds between memory promotion runs (how often to check for and promote old memories)",
+            description="How often (in seconds) to check for memories ready to be promoted. Default 86400 = once a day",
         )
         memory_promotion_age_threshold_days: int = Field(
             default=90,
-            description="Minimum age in days for a memory to be eligible for promotion from short-term to long-term storage",
+            description="How old (in days) a memory must be before it gets moved from short-term to long-term storage",
         )
         enable_memory_linking_task: bool = Field(
             default=True,
-            description="Enable or disable the background memory-conversation linking task (ensures all memories are linked to their source conversations)",
+            description="Turn on/off the background task that makes sure every memory is tied to the conversation it came from",
         )
         memory_linking_interval: int = Field(
             default=18000,  # 5 hours
-            description="Frequency in seconds between memory-conversation linking verification runs",
+            description="How often (in seconds) to verify memory-to-conversation links. Default 18000 = every 5 hours",
         )
         model_discovery_interval: int = Field(
             default=7200,  # 2 hours performance setting
-            description="Interval in seconds between model discovery runs",
+            description="How often (in seconds) to check for available models. Default 7200 = every 2 hours",
         )
         # ------ End Background Task Management Configuration ------
 
         # ------ Begin Summarization Configuration ------
         summarization_min_cluster_size: int = Field(
             default=3,
-            description="Minimum number of memories in a cluster for summarization",
+            description="Minimum number of similar memories that must exist before they get combined into a summary",
         )
         summarization_similarity_threshold: float = Field(
             default=0.7,
-            description="Threshold for considering memories related when using embedding similarity",
+            description="How similar memories need to be (0-1) before they're considered related enough to group. Higher = stricter",
         )
         summarization_max_cluster_size: int = Field(
             default=8,
-            description="Maximum memories to include in one summarization batch",
+            description="Maximum number of memories to combine in a single summarization batch",
         )
         summarization_min_memory_age_days: int = Field(
             default=7,
-            description="Minimum age in days for memories to be considered for summarization",
+            description="How old (in days) a memory must be before it's eligible to be summarized",
         )
         summarization_strategy: Literal["embeddings", "tags", "hybrid"] = Field(
             default="hybrid",
-            description="Strategy for clustering memories: 'embeddings' (semantic similarity), 'tags' (shared tags), or 'hybrid' (combination)",
+            description="'embeddings' = group by meaning, 'tags' = group by tags, 'hybrid' = use both",
         )
         summarization_memory_prompt: str = Field(
             default="""You are a memory summarization assistant. Your task is to combine related memories about a user into a concise, comprehensive summary.
@@ -1235,194 +1111,194 @@ Analyze the following related memories and provide a concise summary.""",
         # ------ Begin Filtering & Saving Configuration ------
         enable_json_stripping: bool = Field(
             default=True,
-            description="Attempt to strip non-JSON text before/after the main JSON object/array from LLM responses.",
+            description="If the memory model returns JSON with junk text around it, try to clean it up automatically",
         )
         enable_fallback_regex: bool = Field(
             default=True,  # Enable for performance fallback
-            description="If primary JSON parsing fails, attempt a simple regex fallback to extract at least one memory.",
+            description="If the JSON from the memory model is broken, try a basic pattern-match rescue to save at least something",
         )
         enable_short_preference_shortcut: bool = Field(
             default=True,
-            description="If JSON parsing fails for a short message containing preference keywords, directly save the message content.",
+            description="If JSON fails completely on a short 'I like X' type message, just save the raw message directly",
         )
         # --- NEW: Deduplication bypass for short preference statements ---
         short_preference_no_dedupe_length: int = Field(
             default=100,  # Allow longer short-preference statements to bypass deduplication
-            description="If a NEW memory's content length is below this threshold and contains preference keywords, skip deduplication checks to avoid false positives.",
+            description="If a new memory is shorter than this many characters AND contains a preference word, skip duplicate checking (prevents false matches on short statements)",
         )
         preference_keywords_no_dedupe: str = Field(
             default="favorite,love,like,prefer,enjoy",
-            description="Comma-separated keywords indicating user preferences that, when present in a short statement, trigger deduplication bypass.",
+            description="Comma-separated words that mark something as a personal preference. Short memories containing these words skip duplicate checks",
         )
 
         # Blacklist topics (comma-separated substrings) - NOW OPTIONAL
         blacklist_topics: Optional[str] = Field(
             default=None,  # Default to None instead of empty string or default list
-            description="Optional: Comma-separated list of topics to ignore during memory extraction",
+            description="Comma-separated topics to exclude from memory. Leave empty to remember everything",
         )
 
         # Whitelist keywords (comma-separated substrings) - NOW OPTIONAL
         whitelist_keywords: Optional[str] = Field(
             default=None,  # Default to None
-            description="Optional: Comma-separated keywords that force-save a memory even if blacklisted",
+            description="Comma-separated words that force a memory to save even if its topic is blacklisted",
         )
 
         # Maximum total memories per user
         max_total_memories: int = Field(
             default=200,
-            description="Maximum number of memories per user; prune oldest beyond this",
+            description="Hard cap on how many memories can exist per user. Oldest (or least relevant) get deleted when this is hit",
         )
 
         pruning_strategy: Literal["fifo", "least_relevant"] = Field(
             default="fifo",
-            description="Strategy for pruning memories when max_total_memories is exceeded: 'fifo' (oldest first) or 'least_relevant' (lowest relevance to current message first).",
+            description="'fifo' = delete oldest first, 'least_relevant' = delete whatever is least related to the current conversation",
         )
 
         # Minimum memory length
         min_memory_length: int = Field(
             default=8,  # Lowered default from 10
-            description="Minimum length of memory content to be saved",
+            description="Shortest allowed memory in characters. Anything shorter gets thrown out",
         )
 
         # Number of recent user messages to include in extraction context
         recent_messages_n: int = Field(
             default=5,
-            description="Number of recent user messages to include in extraction prompt context",
+            description="How many of your recent messages to include when asking the memory model to extract new memories",
         )
 
         # Relevance threshold for saving memories
         save_relevance_threshold: float = Field(
             default=0.8,
-            description="Minimum relevance score (based on relevance calculation method) to save a memory",
+            description="How confident the system needs to be (0-1) that something is worth remembering before saving it",
         )
 
         # Max length of injected memory content (characters)
         max_injected_memory_length: int = Field(
             default=300,
-            description="Maximum length of each injected memory snippet",
+            description="Maximum characters per memory injection. Keeps individual memories from getting too long",
         )
 
         # --- Generic LLM Provider Configuration ---
         llm_provider_type: Literal["ollama", "openai_compatible"] = Field(
             default="ollama",
-            description="Type of LLM provider ('ollama' or 'openai_compatible')",
+            description="Which type of AI backend you're using. 'ollama' for local Ollama, 'openai_compatible' for anything with an OpenAI-style API",
         )
         llm_model_name: str = Field(
             default="llama3:latest",  # Default sensible for Ollama
-            description="Name of the LLM model to use (e.g., 'llama3:latest', 'gpt-4o')",
+            description="The exact model name to use for memory extraction and processing",
         )
         llm_api_endpoint_url: str = Field(
             # Change default to use 172.17.0.1 for Linux Docker to access Ollama on host
             default="http://172.17.0.1:11434/api/chat",
-            description="API endpoint URL for the LLM provider (e.g., 'http://172.17.0.1:11434/api/chat', 'https://api.openai.com/v1/chat/completions')",
+            description="The full URL where your memory LLM is listening",
         )
         llm_api_key: Optional[str] = Field(
             default=None,
-            description="API Key for the LLM provider (required if type is 'openai_compatible')",
+            description="API key if your LLM endpoint requires one. Leave blank for local setups",
         )
         # --- End Generic LLM Provider Configuration ---
 
         # --- Begin Embedding Model Configuration ---
         embedding_model_name: str = Field(
             default="text-embedding-nomic-embed-text-v1.5",
-            description="Name of the embedding model to use from LM Studio (e.g., 'text-embedding-nomic-embed-text-v1.5')",
+            description="Name of the embedding model used to turn memories into searchable vectors",
         )
         embedding_model_dimension: int = Field(
             default=768,
-            description="Dimension of the embedding vectors (e.g., 768 for Nomic, 384 for other models)",
+            description="Number of dimensions your embedding model outputs. Must match the actual model (768 for Nomic, 384 for smaller models)",
         )
         embedding_api_endpoint_url: str = Field(
             default="http://192.168.1.50:1234/v1/embeddings",
-            description="API endpoint URL for embedding model in LM Studio (e.g., 'http://192.168.1.50:1234/v1/embeddings')",
+            description="URL where your embedding model is listening",
         )
         # --- End Embedding Model Configuration ---
 
         # Memory processing settings
         related_memories_n: int = Field(
             default=5,
-            description="Number of related memories to consider",
+            description="How many memories to pull up for consideration when deciding what's relevant to inject",
         )
         relevance_threshold: float = Field(
             default=0.7,  # Performance setting
-            description="Minimum relevance score (0-1) for memories to be considered relevant for injection after scoring",
+            description="Minimum score (0-1) threshold for memory injection",
         )
         memory_threshold: float = Field(
             default=0.6,
-            description="Threshold for similarity when comparing memories (0-1)",
+            description="Minimum similarity score (0-1) when comparing memories to each other",
         )
 
         # Upgrade plan configs
         vector_similarity_threshold: float = Field(
             default=0.7,  # Performance setting
-            description="Minimum cosine similarity for initial vector filtering (0-1)",
+            description="Minimum cosine similarity (0-1) for a memory to even make it past the first vector search filter",
         )
         # NEW: If vector similarities are confidently high, skip the expensive LLM relevance call even
         #       when `use_llm_for_relevance` is True. This reduces overall LLM usage (Improvement #5).
         llm_skip_relevance_threshold: float = Field(
             default=0.93,  # Slightly higher to reduce frequency of LLM calls (performance tuning)
-            description="If *all* vector-filtered memories have similarity >= this threshold, treat the vector score as final relevance and skip the additional LLM call.",
+            description="If ALL retrieved memories score this high or above on vector similarity, skip the LLM relevance check entirely and just inject them (saves processing)",
         )
         top_n_memories: int = Field(
             default=3,  # Performance setting
-            description="Number of top similar memories to pass to LLM",
+            description="How many top-scoring memories to pass to the LLM when doing relevance scoring",
         )
         cache_ttl_seconds: int = Field(
             default=86400,
-            description="Cache time-to-live in seconds (default 24 hours)",
+            description="How long (in seconds) to cache memory results before refreshing. Default 86400 = 24 hours",
         )
 
         # --- Relevance Calculation Configuration ---
         use_llm_for_relevance: bool = Field(
             default=False,  # Performance setting: rely on vector similarity
-            description="Use LLM call for final relevance scoring (if False, relies solely on vector similarity + relevance_threshold)",
+            description="Use the LLM to score memory relevance instead of relying purely on vector similarity. More accurate but slower and costs more context",
         )
         # --- End Relevance Calculation Configuration ---
 
         # Deduplicate identical memories
         deduplicate_memories: bool = Field(
             default=True,
-            description="Prevent storing duplicate or very similar memories",
+            description="Prevent saving memories that are basically the same as ones already stored",
         )
 
         use_embeddings_for_deduplication: bool = Field(
             default=True,
-            description="Use embedding-based similarity for more accurate semantic duplicate detection (if False, uses text-based similarity)",
+            description="Use vector similarity to detect duplicates instead of plain text comparison. Better at catching same-meaning-different-wording duplicates",
         )
 
         # NEW: Dedicated threshold for embedding-based duplicate detection (higher because embeddings are tighter)
         embedding_similarity_threshold: float = Field(
             default=0.97,
-            description="Threshold (0-1) for considering two memories duplicates when using embedding similarity.",
+            description="How similar two memories need to be by vector score (0-1) to count as duplicates. Should be high (0.95+) to avoid false positives",
         )
 
         similarity_threshold: float = Field(
             default=0.95,  # Tighten duplicate detection to minimise false positives
-            description="Threshold for detecting similar memories (0-1) using text or embeddings",
+            description="How similar two memories need to be by text comparison (0-1) to count as duplicates",
         )
 
         # Time settings
         timezone: str = Field(
             default="Asia/Dubai",
-            description="Timezone for date/time processing (e.g., 'America/New_York', 'Europe/London')",
+            description="Your local timezone. Used for stamping and interpreting dates on memories",
         )
 
         # UI settings
         show_status: bool = Field(
-            default=True, description="Show memory operations status in chat"
+            default=True, description="Show a status message in chat when memory operations are happening"
         )
         show_memories: bool = Field(
-            default=True, description="Show relevant memories in context"
+            default=True, description="Show which memories were injected into context at response top"
         )
         memory_format: Literal["bullet", "paragraph", "numbered"] = Field(
-            default="bullet", description="Format for displaying memories in context"
+            default="bullet", description="How to display injected memories in chat: 'bullet' = bullet list, 'paragraph' = flowing text, 'numbered' = numbered list"
         )
 
         # Reminder notification configuration
         show_active_reminders: bool = Field(
-            default=True, description="Show active reminders in context for proactive awareness"
+            default=True, description="Show upcoming/active reminders in context for proactive awareness"
         )
         reminder_format: Literal["bullet", "paragraph", "numbered"] = Field(
-            default="bullet", description="Format for displaying reminders in context"
+            default="bullet", description="How to display reminders in chat: 'bullet' = bullet list, 'paragraph' = flowing text, 'numbered' = numbered list"
         )
         reminder_check_interval: int = Field(
             default=300, description="Interval in seconds between reminder escalation checks (default 5 minutes)"
@@ -1499,7 +1375,7 @@ When you extract information based on both user and assistant messages that refl
 
 You MUST use tags and memory banks as defined below.
 
-IMPORTANT: Each memory you extract MUST be tagged with the appropriate assistant or context. If the user is interacting with a specific assistant (persona) like "Friday", "Tuesday", "Frydai", "Amelia", that context should inform your memory assignments. Memories created during one assistant's conversation belong to that assistant and should be appropriately categorized. Memories created during roleplay (indicated by character markers like `[Character: "X"]`) belong to that character context. Memories about the user themselves do require an assistant tag.
+IMPORTANT: Each memory you extract MUST be tagged with the appropriate assistant or context. If the user is interacting with a specific assistant (persona), that context should inform your memory assignments. Memories created during one assistant's conversation belong to that assistant and should be appropriately categorized. Memories created during roleplay (indicated by character markers like `[Character: "X"]`) belong to that character context. Memories about the user themselves do require an assistant tag.
 
 ---
 
@@ -1525,9 +1401,9 @@ IMPORTANT: Each memory you extract MUST be tagged with the appropriate assistant
 
 This system handles three distinct types of information that MUST NEVER be confused:
 
-1. **USER/ASSISTANT PREFERENCES** (e.g., Friday's memories about Nate)
-   - These go to the Friday Memory System (long-term, persistent)
-   - Each assistant has completely isolated memory contexts (Friday never accesses Tuesday's memories)
+1. **USER/ASSISTANT PREFERENCES** (e.g., assistant memories about the user)
+   - These go to the AI Memory System (long-term, persistent)
+   - Each assistant has completely isolated memory contexts
    - Each assistant records her own experiences and observations about interactions
    - Tagged with: `user` (for user info), assistant name tags, `assistant_observation`, etc.
    - Memory banks: Standard (General, Personal, Work, Intimate, Adult_Content, etc.)
@@ -1679,8 +1555,7 @@ Roleplay memories are completely isolated and separated by model + character + u
 4. Each thread is completely independent and non-searchable by users or the roleplay model itself
 
 **Critical rules for roleplay memory isolation:**
-- Roleplay model memories NEVER have access to the Friday Memory System (long-term memories)
-- Roleplay memories ALWAYS stay in short-term storage (never promoted to long-term)
+- Roleplay model memories NEVER have access to the AI Memory System (long-term memories)\n- Roleplay memories ALWAYS stay in short-term storage (never promoted to long-term)
 - Roleplay models NEVER receive memory injection or access memory retrieval tools
 - Each model+character+user combination maintains its own isolated memory context
 - User characters (character played by the user) are treated separately from roleplay models:
@@ -1817,44 +1692,70 @@ Guidance:
 
 ---
 
-**STRICT RULES:**
-1. **Output MUST be a JSON object with status/reason/memories (not a plain array)**  
-2. **All memory objects MUST be separate entries**  
-3. **Use appropriate phrasing for inferred or implied information**  
-4. **Use expanded tags and expanded memory banks**  
-5. **Follow JSON schema EXACTLY**  
-6. **No added explanations or extra output — JSON ONLY**
+**RELEVANCE SCORING:**
+For each memory extracted, assign a relevance_score (1-10) indicating how important/persistent this information is:
+- 1-2: Trivial, will be forgotten quickly (e.g., "user ate pizza today")
+- 3-4: Minor details (e.g., "user was running late")
+- 5-6: Moderate importance (e.g., "user prefers morning meetings")
+- 7-8: Important preferences/patterns (e.g., "user has ADHD" or "user loves coding")
+- 9-10: Critical identity/constraints (e.g., "user had 4 strokes since 2016" or "user's primary goal")
+
+This score informs the system's importance_level for memory linking and search ranking.
+
+**USER NAME EXTRACTION:**
+When extracting memories, look for any mention of the user's name (especially first names like "Nate", "Nathan", "Alex", etc.). 
+Return the extracted user name in the "extracted_user_name" field (or null if not mentioned).
+Do NOT return assumed names—only names explicitly mentioned in the conversation.
 
 ---
 
-**EXAMPLE OUTPUT - When memories found (REQUIRED FORMAT):**
+STRICT RULES:
 
+Output MUST be a JSON object with status/reason/memories (not a plain array)
+All memory objects MUST be separate entries
+Use appropriate phrasing for inferred or implied information
+Use expanded tags and expanded memory banks
+Follow JSON schema EXACTLY with relevance_score and extracted_user_name
+No added explanations or extra output — JSON ONLY
+relevance_score is REQUIRED on every memory — never omit it, default to 5 if unsure
+Use "no_memories_found" ONLY when there is absolutely no user-specific information — if in doubt, extract a memory with "success" status. Err on the side of extraction, never on the side of omission.
+
+---
+
+EXAMPLE OUTPUT - When memories found (REQUIRED FORMAT):
 {
-  "status": "success",
-  "reason": "Contextual and project-related details extracted",
-  "memories": [
-    {
-      "operation": "NEW",
-      "content": "User is currently working on improving an AI project",
-      "tags": ["project", "behavior"],
-      "memory_bank": "Projects"
-    },
-    {
-      "operation": "NEW",
-      "content": "User has been experimenting with new model configurations",
-      "tags": ["technical_state", "behavior"],
-      "memory_bank": "Technical"
-    }
-  ]
+"status": "success",
+"reason": "Contextual and project-related details extracted",
+"memories": [
+{
+"operation": "NEW",
+"content": "User is currently working on improving an AI project",
+"tags": ["project", "behavior"],
+"memory_bank": "Projects",
+"relevance_score": 7,
+"extracted_user_name": "Nate"
+},
+{
+"operation": "NEW",
+"content": "User has been experimenting with new model configurations",
+"tags": ["technical_state", "behavior"],
+"memory_bank": "Technical",
+"relevance_score": 5,
+"extracted_user_name": null
 }
+]
+}
+Each memory above will be stored in the following format — use this to verify your output looks correct before finalizing:
+[Tags: project, behavior] User is currently working on improving an AI project [Memory Bank: Projects] [Model: friday] [Importance: 7]
+[Tags: technical_state, behavior] User has been experimenting with new model configurations [Memory Bank: Technical] [Model: friday] [Importance: 5]
 
 
-**EXAMPLE OUTPUT - When no memories found:**
-
+EXAMPLE OUTPUT - When absolutely no user-specific information exists:
+WARNING: Only use this when the conversation contains zero extractable facts, preferences, goals, or behaviors about the user. If there is any doubt, extract a memory instead of returning no_memories_found.
 {
-  "status": "no_memories_found",
-  "reason": "No user-specific information detected in message",
-  "memories": []
+"status": "no_memories_found",
+"reason": "No user-specific information detected in message",
+"memories": []
 }
 
 
@@ -1915,12 +1816,12 @@ EXAMPLE OUTPUT - When relevant memories found:
 }
 
 
-EXAMPLE OUTPUT - When no relevant memories found:
-
+EXAMPLE OUTPUT - When absolutely no user-specific information exists:
+WARNING: Only use this when the conversation contains zero extractable facts, preferences, goals, or behaviors about the user. If there is any doubt, extract a memory instead of returning no_memories_found.
 {
-  "status": "no_relevant_memories",
-  "reason": "No memories matched the current topic or context",
-  "memories": []
+"status": "no_memories_found",
+"reason": "No user-specific information detected in message",
+"memories": []
 }
 
 
@@ -2042,14 +1943,8 @@ Your output must be valid JSON only. No additional text.""",
         # ------ End Filtering & Saving Configuration ------
 
         # ------ Begin Memory Bank Configuration ------
-        allowed_memory_banks: List[str] = Field(
-            default=["General", "Personal", "Work"],
-            description="List of allowed memory bank names for categorization.",
-        )
-        default_memory_bank: str = Field(
-            default="General",
-            description="Default memory bank assigned when LLM omits or supplies an invalid bank.",
-        )
+        # Memory banks are now dynamically discovered from existing memories and file-based registry
+        # See: _ensure_system_markers_dir(), _load_bank_registry(), _discovered_memory_banks
         # ------ End Memory Bank Configuration ------
 
         # ------ Begin Conversation Summarization Configuration ------
@@ -2125,6 +2020,139 @@ Analyze the following conversation and provide a concise summary.""",
         self.embedding_cache = self.EmbeddingCache()
         logger.info("✓ Initialized persistent embedding cache")
 
+        # Schedule retroactive importance scoring of existing memories
+        self._importance_scoring_task = asyncio.create_task(
+            self._retroactively_score_memory_importance()
+        )
+        self._background_tasks.add(self._importance_scoring_task)
+        self._importance_scoring_task.add_done_callback(
+            self._background_tasks.discard
+        )
+
+        # Pre-load cached embeddings into in-memory dict with model-aware dimension validation
+        try:
+            cached_ids = self.embedding_cache.get_all_memory_ids()
+            if cached_ids:
+                # Current embedding model configuration
+                current_model_name = self.valves.embedding_model_name
+                current_model_dim = self.valves.embedding_model_dimension
+                logger.debug(f"Pre-load: Current model = {current_model_name} ({current_model_dim}D)")
+                
+                # Check embeddings_completed.log for saved model metadata
+                embeddings_log_path = os.path.join(get_log_dir(), "embeddings_completed.log")
+                saved_model_name = None
+                saved_model_dim = None
+                model_mismatch = False
+                
+                if os.path.exists(embeddings_log_path):
+                    try:
+                        with open(embeddings_log_path, "r") as f:
+                            log_content = f.read().strip()
+                        
+                        # Try to parse model metadata: format "YYYY-MM-DD HH:MM:SS [model=X, dimension=Y]"
+                        import re
+                        match = re.search(r"\[model=([^,]+),\s*dimension=(\d+)\]", log_content)
+                        if match:
+                            saved_model_name = match.group(1)
+                            saved_model_dim = int(match.group(2))
+                            logger.debug(f"✓ Parsed saved model metadata: {saved_model_name} ({saved_model_dim}D)")
+                        else:
+                            # Legacy format: no model metadata
+                            logger.warning(
+                                f"⚠️ LEGACY LOG FORMAT: embeddings_completed.log exists but has no model metadata. "
+                                f"Cannot verify if cache is compatible with current model. "
+                                f"Will invalidate cache and re-embed with current model."
+                            )
+                            model_mismatch = True
+                    except Exception as e:
+                        logger.warning(f"Could not parse embeddings_completed.log: {e}, treating as model mismatch")
+                        model_mismatch = True
+                
+                # Determine if model has changed
+                if saved_model_name is None:
+                    # No saved metadata: first run or legacy format
+                    model_mismatch = True
+                elif saved_model_name != current_model_name:
+                    logger.warning(
+                        f"⚠️ EMBEDDING MODEL CHANGED: Previously used {saved_model_name}, "
+                        f"now configured to use {current_model_name}. Will re-embed all memories."
+                    )
+                    model_mismatch = True
+                
+                # If model changed, invalidate cached embeddings
+                if model_mismatch:
+                    logger.info("🗑️ Invalidating embedding cache due to model mismatch")
+                    self.embedding_cache.clear()
+                    # Delete log file so _retroactively_embed_all_memories() will re-run
+                    try:
+                        if os.path.exists(embeddings_log_path):
+                            os.remove(embeddings_log_path)
+                            logger.info("🗑️ Deleted embeddings_completed.log to trigger re-embedding")
+                    except Exception as e:
+                        logger.warning(f"Could not delete embeddings_completed.log: {e}")
+                    # Will skip pre-load, let retroactive embedding handle it
+                    cached_ids = []
+                
+                # Validate dimension compatibility by checking first cached embedding (if not model mismatch)
+                dimension_valid = True
+                sample_emb = None
+                if not model_mismatch and cached_ids:
+                    for mem_id in cached_ids[:1]:  # Sample first embedding to check dimension
+                        sample_emb = self.embedding_cache.get(mem_id)
+                        if sample_emb is not None:
+                            break
+                    
+                    if sample_emb is not None and hasattr(sample_emb, "shape"):
+                        cached_dimension = sample_emb.shape[0]
+                        expected_dimension = saved_model_dim if saved_model_dim is not None else current_model_dim
+                        
+                        if cached_dimension != expected_dimension:
+                            dimension_valid = False
+                            logger.warning(
+                                f"⚠️ CACHE INVALIDATION: Embedding dimension mismatch detected! "
+                                f"Cached={cached_dimension}D, Expected={expected_dimension}D. "
+                                f"Clearing cache to prevent silently loading stale vectors."
+                            )
+                            self.embedding_cache.clear()
+                            logger.info("✓ Cleared invalidated embedding cache")
+                            cached_ids = []  # Skip pre-load
+                
+                # Pre-load all cached embeddings if validation passed and model is current
+                if dimension_valid and sample_emb is not None and not model_mismatch and cached_ids:
+                    preload_count = 0
+                    for mem_id in cached_ids:
+                        try:
+                            emb = self.embedding_cache.get(mem_id)
+                            if emb is not None:
+                                self.memory_embeddings[mem_id] = emb
+                                preload_count += 1
+                        except Exception as e:
+                            logger.debug(f"Could not pre-load embedding for {mem_id}: {e}")
+                    
+                    logger.info(f"✓ Pre-loaded {preload_count} cached embeddings into memory ({current_model_dim}D, model={current_model_name})")
+                    
+                    # Set dimension tracking so first message doesn't trigger false dimension_changed
+                    self._last_embedding_dimension = current_model_dim
+                    logger.debug(f"✓ Set embedding dimension tracker to {current_model_dim}D (prevents false dimension_changed on first message)")
+                    
+                    # Update log with current model metadata
+                    try:
+                        from datetime import datetime
+                        completion_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        log_content = f"{completion_time} [model={current_model_name}, dimension={current_model_dim}]"
+                        os.makedirs(os.path.dirname(embeddings_log_path), exist_ok=True)
+                        with open(embeddings_log_path, "w") as f:
+                            f.write(log_content)
+                        logger.info(f"📝 Updated embeddings_completed.log with current model metadata")
+                    except Exception as e:
+                        logger.warning(f"Could not update embeddings_completed.log: {e}")
+                elif not cached_ids and not model_mismatch:
+                    logger.debug("Embedding cache is empty or validation failed, will embed on-demand")
+            else:
+                logger.debug("No cached embedding IDs found, skipping pre-load")
+        except Exception as e:
+            logger.warning(f"Error during pre-load of embeddings from cache: {e}, will embed on-demand")
+
         # ------------------------------------------------------------
         # OpenWebUI may optionally inject a `.config` attribute that
         # contains plugin-specific configuration (e.g. from a YAML or
@@ -2137,35 +2165,17 @@ Analyze the following conversation and provide a concise summary.""",
         if not hasattr(self, "config"):
             self.config: Dict[str, Any] = {}
 
-        # --- Attempt to load valves from memory_config.json (for standalone deployment) ---
-        memory_config = self._load_memory_config()
-        if memory_config:
-            try:
-                # Flatten the nested config structure to extract valve settings
-                flattened_config = {}
-                for section_key, section_values in memory_config.items():
-                    if isinstance(section_values, dict):
-                        # Extract non-comment keys from each section
-                        for key, value in section_values.items():
-                            if not key.startswith("_"):  # Skip comment fields
-                                flattened_config[key] = value
-                
-                if flattened_config:
-                    self.valves = self.Valves(**flattened_config)
-                    logger.info(f"✓ Loaded valve defaults from memory_config.json ({len(flattened_config)} settings)")
-            except Exception as e:
-                logger.warning(f"Error loading memory_config.json settings: {e}, continuing with defaults")
-
-        # --- Attempt to load valves from persisted file (higher priority than memory_config.json) ---
+        # --- Attempt to load valves from persisted file first (highest priority for startup) ---
         persisted_settings = self._load_persisted_valve_settings()
         if persisted_settings:
             try:
                 self.valves = self.Valves(**persisted_settings)
-                logger.info("✓ Restored valve settings from persisted file")
+                logger.info("✓ Restored valve settings from persisted file (highest startup priority)")
             except Exception as e:
-                logger.error(f"Error restoring persisted valve settings: {e}, falling back to previous")
+                logger.error(f"Error restoring persisted valve settings: {e}, falling back to defaults")
+                self.valves = self.Valves()
         
-        # --- Attempt to load valves from open_webui.config during init (highest priority) ---
+        # --- Attempt to load valves from open_webui.config during init ---
         try:
             logger.info(
                 f"Attempting to load valves from self.config during __init__. self.config content: {getattr(self, 'config', '<Not Set>')}"
@@ -2219,6 +2229,36 @@ Analyze the following conversation and provide a concise summary.""",
         # Hold last processed body for confirmation tagging
         self._last_body: Dict[str, Any] = {}
 
+        # --- TASK 1: Initialize system markers directory and bank registry ---
+        try:
+            self._ensure_system_markers_dir()
+            logger.info("✓ System markers directory initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize system markers: {e}")
+
+        # --- TASK 3: Load discovered memory banks from registry file ---
+        try:
+            self._discovered_memory_banks = self._load_bank_registry()
+            logger.info(f"✓ Loaded {len(self._discovered_memory_banks)} discovered banks: {sorted(self._discovered_memory_banks)}")
+        except Exception as e:
+            logger.error(f"Failed to load bank registry: {e}")
+            self._discovered_memory_banks = {"general", "personal", "work"}
+
+        # --- TASK 1: Check if migration needs to run ---
+        # (Will be scheduled as async background task on first inlet call)
+        try:
+            self._migration_instance = MemoryNormalizationMigration(
+                migration_marker_path=os.path.join(get_memory_data_dir(), ".migration_completed")
+            )
+            self._migration_needs_run = not self._migration_instance.has_completed()
+            if self._migration_needs_run:
+                logger.info("Migration needed on startup - will run on first inlet call")
+            else:
+                logger.debug("Memory normalization migration already completed")
+        except Exception as e:
+            logger.error(f"Failed to initialize migration checker: {e}")
+            self._migration_needs_run = False
+
         # Memory operation queue system
         self._memory_task_queue = asyncio.Queue()
         self._active_memory_tasks = {}  # conversation_id -> task info
@@ -2227,6 +2267,8 @@ Analyze the following conversation and provide a concise summary.""",
 
         # Background tasks tracking
         self._background_tasks = set()
+
+        self._last_inlet_time = None  # Tracks last inlet activity for background task gating
 
         # Error counters
         self.error_counters = {
@@ -2239,6 +2281,15 @@ Analyze the following conversation and provide a concise summary.""",
         # Error log deduplication - prevent duplicate errors within time window
         self._error_log_cache: Dict[str, float] = {}  # error_hash -> last_logged_time
         self._error_dedup_window: float = 5.0  # seconds
+
+        # Schedule retroactive normalization of old-format memories
+        self._normalization_task = asyncio.create_task(
+            self._retroactively_normalize_old_memories()
+        )
+        self._background_tasks.add(self._normalization_task)
+        self._normalization_task.add_done_callback(
+            self._background_tasks.discard
+        )
 
         # Track embedding dimension for smart validation (only check on dimension change)
         self._last_embedding_dimension = None  # Will be set on first user embedding
@@ -2329,9 +2380,6 @@ Analyze the following conversation and provide a concise summary.""",
 
         # In-memory cache: (hash of user_emb + mem_emb) -> (score, timestamp)
         self._relevance_cache = {}
-        
-        # Reverse index: memory_id -> set of cache keys for precise invalidation
-        self._memory_to_cache_keys = {}
 
         # Error counter tracking for guard mechanism (Point 8)
         from collections import deque
@@ -2417,11 +2465,8 @@ Analyze the following conversation and provide a concise summary.""",
             possible_paths = [
                 os.path.join(script_dir, "embedding_config.json"),
                 os.path.join(os.path.dirname(script_dir), "embedding_config.json"),
+                os.path.join(Path(__file__).parent, "embedding_config.json"),  # Fallback to script location
             ]
-            
-            # Add user-configured path if specified
-            if os.getenv("AI_MEMORY_CONFIG_DIR"):
-                possible_paths.append(os.path.join(os.getenv("AI_MEMORY_CONFIG_DIR"), "embedding_config.json"))
             
             config_path = None
             for path in possible_paths:
@@ -2594,18 +2639,17 @@ Analyze the following conversation and provide a concise summary.""",
         """
         Initialize error tracking JSON file if it doesn't exist.
         
-        Creates error tracking file in directory specified by AI_MEMORY_LOG_DIR
-        (defaults to ~/.ai_memory/logs/memory_validation_errors.json).
+        Creates memory_validation_errors.json in the logs directory
+        with empty error structure.
         
         Returns:
             True if file created or already exists, False on error.
         """
         try:
-            log_dir = self._get_error_log_dir()
-            error_file_path = os.path.join(log_dir, "memory_validation_errors.json")
+            error_file_path = os.path.join(get_log_dir(), "memory_validation_errors.json")
             
-            # Create log directory if it doesn't exist
-            os.makedirs(log_dir, exist_ok=True)
+            # Create logs directory if it doesn't exist
+            os.makedirs(os.path.dirname(error_file_path), exist_ok=True)
             
             # If file already exists, don't overwrite
             if os.path.exists(error_file_path):
@@ -2639,8 +2683,7 @@ Analyze the following conversation and provide a concise summary.""",
             Returns empty structure if file doesn't exist.
         """
         try:
-            log_dir = self._get_error_log_dir()
-            error_file_path = os.path.join(log_dir, "memory_validation_errors.json")
+            error_file_path = os.path.join(get_log_dir(), "memory_validation_errors.json")
             
             if not os.path.exists(error_file_path):
                 return {
@@ -2675,10 +2718,9 @@ Analyze the following conversation and provide a concise summary.""",
             True if successful, False otherwise.
         """
         try:
-            log_dir = self._get_error_log_dir()
-            error_file_path = os.path.join(log_dir, "memory_validation_errors.json")
+            error_file_path = os.path.join(get_log_dir(), "memory_validation_errors.json")
             
-            os.makedirs(log_dir, exist_ok=True)
+            os.makedirs(os.path.dirname(error_file_path), exist_ok=True)
             
             with open(error_file_path, 'w') as f:
                 json.dump(error_data, f, indent=2)
@@ -2840,13 +2882,6 @@ Analyze the following conversation and provide a concise summary.""",
                 "example_memory": str or None (example of problematic memory if error)
             }
         """
-        # Valid memory banks
-        VALID_BANKS = {
-            "General", "Personal", "Work", "Projects", "Technical", "Tasks",
-            "Research", "Context", "Patterns", "Preferences", "Temporary",
-            "Character", "Character_Interaction"
-        }
-        
         try:
             # Step 1: Parse JSON
             try:
@@ -2969,12 +3004,12 @@ Analyze the following conversation and provide a concise summary.""",
                         "example_memory": memory.get("content", "unknown")[:100]
                     }
                 
-                # Check memory_bank is valid
-                if memory["memory_bank"] not in VALID_BANKS:
+                # Check memory_bank is valid string (TASK 3: Use dynamic registry, not hardcoded VALID_BANKS)
+                if not isinstance(memory.get("memory_bank"), str) or not memory["memory_bank"].strip():
                     return {
                         "is_valid": False,
                         "error_type": "wrong_bank",
-                        "error_details": f"Memory {i} has invalid bank: {memory['memory_bank']}. Valid banks: {', '.join(sorted(VALID_BANKS))}",
+                        "error_details": f"Memory {i} has invalid bank: must be non-empty string, got {memory.get('memory_bank')}",
                         "parsed_data": None,
                         "example_memory": memory.get("content", "unknown")[:100]
                     }
@@ -3600,7 +3635,7 @@ Produce ONLY the corrected JSON output following the format specified in the sys
             return False
 
         total_messages = len(messages)
-        conversation_id = body.get("chat_id") or body.get("conversation_id") or "default"
+        conversation_id = getattr(self, "_current_conversation_id", None) or body.get("chat_id") or body.get("conversation_id") or "default"
         tracking_key = f"conv_summary_{user_id}_{conversation_id}"
 
         # Initialize tracking dict if needed
@@ -3641,7 +3676,7 @@ Produce ONLY the corrected JSON output following the format specified in the sys
                 return None
 
             total_messages = len(messages)
-            conversation_id = body.get("chat_id") or body.get("conversation_id") or "default"
+            conversation_id = getattr(self, "_current_conversation_id", None) or body.get("chat_id") or body.get("conversation_id") or "default"
             tracking_key = f"conv_summary_{user_id}_{conversation_id}"
 
             # Get last count when summary was generated
@@ -3736,11 +3771,9 @@ Produce ONLY the corrected JSON output following the format specified in the sys
                 messages.insert(0, {"role": "system", "content": system_content})
                 logger.debug(f"Injected conversation summary with system prompt from model card")
             else:
-                # Don't inject if we can't preserve Friday's personality
-                logger.warning(
-                    f"Skipping summary injection: No existing system message and no system prompt from model card. "
-                    f"This preserves Friday's configured personality."
-                )
+                # Inject summary as its own system message rather than dropping it
+                messages.insert(0, {"role": "system", "content": f"[Earlier Conversation Summary]\n{summary}"})
+                logger.info("Injected conversation summary as new system message (no existing system prompt found)")
 
         except Exception as e:
             logger.error(f"Error injecting conversation summary into context: {e}")
@@ -4125,14 +4158,14 @@ Produce ONLY the corrected JSON output following the format specified in the sys
                                         ),
                                     }
 
-                                    # Use Friday Memory System tools to store
+                                    # Use AI Memory System tools to store
                                     if FRIDAY_MEMORY_SYSTEM_AVAILABLE:
                                         try:
-                                            from friday_memory_system import (
-                                                FridayMemorySystem,
+                                            from ai_memory_core import (
+                                                AIMemorySystem,
                                             )
 
-                                            memory_system = FridayMemorySystem()
+                                            memory_system = AIMemorySystem()
                                             logger.info(f"Promoting memory '{mem.get('id')}' to Friday Memory System for user {user_id} with model_id={model_card_name}")
                                             
                                             # Try to find actual conversation_id this memory is linked to
@@ -4164,9 +4197,21 @@ Produce ONLY the corrected JSON output following the format specified in the sys
                                             except Exception as link_query_error:
                                                 logger.debug(f"Could not query conversation links: {link_query_error}")
                                             
+                                            # PHASE 1C: Use smarter importance for promoted memories
+                                            # Promoted memories are 90+ days old and survived pruning = more important
+                                            # Extract importance from memory metadata if available, else use 6
+                                            mem_metadata = mem.get("metadata", {}) or {}
+                                            extracted_importance = mem_metadata.get("importance_level")
+                                            if extracted_importance and isinstance(extracted_importance, (int, float)):
+                                                # Use the actual importance from the memory
+                                                importance_level = min(int(extracted_importance), 10)  # Cap at 10
+                                            else:
+                                                # Fallback: promoted memories survived 90+ days, so worth 6
+                                                importance_level = 6
+                                            
                                             result = await memory_system.create_memory(
                                                 content=memory_content,
-                                                importance_level=5,  # Default importance
+                                                importance_level=importance_level,  # Use extracted or 6 for promoted
                                                 memory_type="archived",
                                                 source_conversation_id=source_conversation_id,
                                                 tags=["promoted", "archived"],
@@ -4293,11 +4338,11 @@ Produce ONLY the corrected JSON output following the format specified in the sys
                 
                 try:
                     if not FRIDAY_MEMORY_SYSTEM_AVAILABLE:
-                        logger.warning("Friday Memory System not available, skipping linking verification")
+                        logger.warning("AI Memory System not available, skipping linking verification")
                         continue
                     
-                    from friday_memory_system import FridayMemorySystem
-                    memory_system = FridayMemorySystem()
+                    from ai_memory_core import AIMemorySystem
+                    memory_system = AIMemorySystem()
                     
                     # Query all memories from Friday system
                     all_memories = await memory_system.get_memories()
@@ -4679,6 +4724,150 @@ Produce ONLY the corrected JSON output following the format specified in the sys
             )
         return self._aiohttp_session
 
+    def _normalize_name(self, name: str) -> str:
+        """
+        Normalize model, user, and bank names to lowercase.
+        Used consistently for model_id, user_id, and memory_bank names.
+        """
+        if not name:
+            return ""
+        return name.strip().lower()
+
+    def _ensure_system_markers_dir(self) -> str:
+        """
+        Ensure SystemMarkers directory and bank_registry.json exist.
+        Called on every startup to handle fresh installs and reinstalls.
+        
+        Returns:
+            Path to bank_registry.json file
+        """
+        markers_dir = os.path.join(get_memory_data_dir(), "SystemMarkers")
+        registry_file = os.path.join(markers_dir, "bank_registry.json")
+        
+        try:
+            # Create directory if it doesn't exist
+            os.makedirs(markers_dir, exist_ok=True)
+            logger.info(f"\u2713 SystemMarkers directory ensured at {markers_dir}")
+            
+            # Create bank_registry.json if it doesn't exist
+            if not os.path.exists(registry_file):
+                default_registry = {
+                    "version": 1,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "banks": [
+                        {"name": "general", "registered_at": datetime.now(timezone.utc).isoformat()},
+                        {"name": "personal", "registered_at": datetime.now(timezone.utc).isoformat()},
+                        {"name": "work", "registered_at": datetime.now(timezone.utc).isoformat()},
+                    ]
+                }
+                with open(registry_file, "w") as f:
+                    json.dump(default_registry, f, indent=2)
+                logger.info(f"✓ bank_registry.json created with default banks at {registry_file}")
+            else:
+                logger.debug(f"✓ bank_registry.json already exists at {registry_file}")
+                
+            return registry_file
+            
+        except Exception as e:
+            logger.error(f"Error ensuring SystemMarkers directory: {e}")
+            raise
+
+    def _load_bank_registry(self) -> Set[str]:
+        """
+        Load discovered memory banks from file and memory scan.
+        
+        Returns:
+            Set of normalized (lowercase) bank names
+        """
+        banks = set()
+        registry_file = os.path.join(get_memory_data_dir(), "SystemMarkers", "bank_registry.json")
+        
+        try:
+            # Load from file first
+            if os.path.exists(registry_file):
+                try:
+                    with open(registry_file, "r") as f:
+                        registry_data = json.load(f)
+                        if isinstance(registry_data, dict) and "banks" in registry_data:
+                            for bank_entry in registry_data["banks"]:
+                                bank_name = bank_entry.get("name", "").strip().lower()
+                                if bank_name:
+                                    banks.add(bank_name)
+                            logger.info(f"✓ Loaded {len(banks)} banks from registry file: {sorted(banks)}")
+                        else:
+                            logger.warning(f"Invalid registry format, seeding with defaults")
+                            banks = {"general", "personal", "work"}
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse bank_registry.json: {e}, using defaults")
+                    banks = {"general", "personal", "work"}
+            else:
+                logger.info("Registry file not found, seeding with default banks")
+                banks = {"general", "personal", "work"}
+            
+            # Ensure minimum banks are present
+            if not banks:
+                banks = {"general", "personal", "work"}
+                
+            return banks
+            
+        except Exception as e:
+            logger.error(f"Error loading bank registry: {e}, using defaults")
+            return {"general", "personal", "work"}
+
+    def _register_new_bank(self, bank_name: str) -> bool:
+        """
+        Register a new memory bank by adding it to the registry file.
+        
+        Args:
+            bank_name: Name of the bank to register (will be normalized to lowercase)
+        
+        Returns:
+            True if successfully registered, False otherwise
+        """
+        normalized_bank = self._normalize_name(bank_name)
+        if not normalized_bank or len(normalized_bank) > 50:
+            logger.warning(f"Invalid bank name: {bank_name} (too long or empty)")
+            return False
+        
+        registry_file = os.path.join(get_memory_data_dir(), "SystemMarkers", "bank_registry.json")
+        
+        try:
+            # Read current registry
+            if os.path.exists(registry_file):
+                with open(registry_file, "r") as f:
+                    registry_data = json.load(f)
+            else:
+                registry_data = {
+                    "version": 1,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "banks": []
+                }
+            
+            # Check if bank already exists
+            existing_names = {entry.get("name", "").lower() for entry in registry_data.get("banks", [])}
+            if normalized_bank in existing_names:
+                logger.debug(f"Bank '{normalized_bank}' already registered")
+                return True
+            
+            # Add new bank entry
+            registry_data["banks"].append({
+                "name": normalized_bank,
+                "registered_at": datetime.now(timezone.utc).isoformat()
+            })
+            
+            # Write back to file
+            with open(registry_file, "w") as f:
+                json.dump(registry_data, f, indent=2)
+            
+            logger.info(f"✓ Auto-registered and persisted new memory bank: {normalized_bank}")
+            # Update in-memory set
+            self._discovered_memory_banks.add(normalized_bank)
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error registering new bank '{normalized_bank}': {e}")
+            return False
+
     async def inlet(
         self,
         body: Dict[str, Any],
@@ -4693,6 +4882,7 @@ Produce ONLY the corrected JSON output following the format specified in the sys
         /memory summarize [topic/tag], /note [content], /memory mark_important [id],
         /memory unmark_important [id], /memory list_banks, /memory assign_bank [id] [bank]
         """
+        self._last_inlet_time = datetime.now(timezone.utc)
         logger.debug(
             f"Inlet received body keys: {list(body.keys())} for user: {__user__.get('id', 'N/A') if __user__ else 'N/A'}"
         )
@@ -4741,13 +4931,52 @@ Produce ONLY the corrected JSON output following the format specified in the sys
         user_id = __user__["id"]
         user_name = __user__.get("name", "Unknown")
         
+        # --- TASK 1: Trigger migration on first inlet call if needed ---
+        if self._migration_needs_run:
+            try:
+                logger.info("Migration needed - scheduling normalization async task...")
+                
+                # ISSUE 2 FIX: Create async wrapper for updating memories via Memories class
+                async def update_memory_wrapper(memory_id: str, content: str, user_id: str = None):
+                    """Wrapper to update memory using the Memories model class"""
+                    try:
+                        result = Memories.update_memory_by_id_and_user_id(
+                            id=memory_id,
+                            user_id=user_id or "all",  # Use provided user_id or fall back to "all"
+                            content=content,
+                            db=None  # Will create its own session via get_db_context
+                        )
+                        if result:
+                            logger.debug(f"Memory {memory_id} updated successfully")
+                            return True
+                        else:
+                            logger.warning(f"Failed to update memory {memory_id}: returned None")
+                            return False
+                    except Exception as e:
+                        logger.error(f"Error updating memory {memory_id}: {e}")
+                        return False
+                
+                # Schedule migration as background task (non-blocking)
+                # ISSUE 3 FIX: mark_completed() is called from inside the migration, not here
+                asyncio.create_task(
+                    self._migration_instance.run_migration(
+                        query_memory_func=query_memory,
+                        update_memory_func=update_memory_wrapper
+                    )
+                )
+                self._migration_needs_run = False
+                logger.info("✓ Memory normalization migration scheduled")
+            except Exception as e:
+                logger.error(f"Error scheduling memory migration: {e}\n{traceback.format_exc()}")
+                self._migration_needs_run = False  # Don't retry to avoid spam
+        
         # Store UUID for access by outlet and other methods
         self._current_user_uuid = user_id
         self._current_user_name = user_name
 
         # --- Extract Conversation Context (chat_id, model_id, model_card_name) ---
         # Capture these early so outlet() can use them when linking memories
-        chat_id = body.get("chat_id", None)
+        chat_id = body.get("chat_id") or (__metadata__ or {}).get("chat_id")
         
         # Extract model card name (persona) with fallback to backend model ID
         # Primary: model card name from metadata (e.g., "Friday", "Tara")
@@ -4757,6 +4986,10 @@ Produce ONLY the corrected JSON output following the format specified in the sys
             model_card_name = __metadata__.get("model", {}).get("name")
         if not model_card_name:
             model_card_name = body.get("model", "default")
+        
+        # TASK 2: Normalize model_card_name and user_id to lowercase
+        model_card_name = self._normalize_name(model_card_name)
+        user_id = self._normalize_name(user_id)
         
         # Store for use throughout the session
         self._current_model_card_name = model_card_name
@@ -4944,15 +5177,16 @@ Produce ONLY the corrected JSON output following the format specified in the sys
             ):
                 logger.info(f"Handling command: /memory list_banks for user {user_id}")
                 try:
-                    allowed_banks = self.valves.allowed_memory_banks
-                    default_bank = self.valves.default_memory_bank
+                    # TASK 3: Use dynamic registry instead of valve
+                    discovered_banks = sorted(self._discovered_memory_banks)
+                    default_bank = "general"  # Hardcoded default now that we removed valve
                     bank_list_str = "\n".join(
                         [
-                            f"- {bank} {'(Default)' if bank == default_bank else ''}"
-                            for bank in allowed_banks
+                            f"- {bank.capitalize()} {'(Default)' if bank == default_bank else ''}"
+                            for bank in discovered_banks
                         ]
                     )
-                    response_msg = f"**Available Memory Banks:**\n{bank_list_str}"
+                    response_msg = f"**Available Memory Banks:**\n{bank_list_str}\n\n*Note: New banks will be auto-registered on first use.*"
                     await self._safe_emit(
                         __event_emitter__, {"type": "info", "content": response_msg}
                     )
@@ -4985,13 +5219,16 @@ Produce ONLY the corrected JSON output following the format specified in the sys
                     memory_id = command_parts[2]
                     target_bank = command_parts[3]
 
-                    if target_bank not in self.valves.allowed_memory_banks:
-                        allowed_banks_str = ", ".join(self.valves.allowed_memory_banks)
+                    # TASK 2 & 3: Normalize and check against dynamic registry
+                    target_bank_normalized = self._normalize_name(target_bank)
+                    
+                    if target_bank_normalized not in self._discovered_memory_banks:
+                        discovered_banks_str = ", ".join(sorted(self._discovered_memory_banks))
                         await self._safe_emit(
                             __event_emitter__,
                             {
                                 "type": "error",
-                                "content": f"Invalid bank '{target_bank}'. Allowed banks: {allowed_banks_str}",
+                                "content": f"Invalid bank '{target_bank}'. Available banks: {discovered_banks_str}\n\n*Tip: New banks will be auto-registered on first use.*",
                             },
                         )
                     else:
@@ -5020,8 +5257,9 @@ Produce ONLY the corrected JSON output following the format specified in the sys
                             )
                         else:
                             # 2. Check if bank is already correct
+                            # TASK 3: Use 'general' as default fallback
                             current_bank = target_memory.metadata.get(
-                                "memory_bank", self.valves.default_memory_bank
+                                "memory_bank", "general"
                             )
                             if current_bank == target_bank:
                                 await self._safe_emit(
@@ -5150,7 +5388,7 @@ Produce ONLY the corrected JSON output following the format specified in the sys
                     self._inject_summary_into_context(body, summary, system_prompt)
 
                     # Store summary in cache (not as memory to avoid flooding)
-                    conversation_id = body.get("chat_id") or body.get("conversation_id") or "default"
+                    conversation_id = getattr(self, "_current_conversation_id", None) or body.get("chat_id") or body.get("conversation_id") or "default"
                     if not hasattr(self, "_conversation_summaries"):
                         self._conversation_summaries = {}
                     cache_key = f"{user_id}_{conversation_id}"
@@ -5172,6 +5410,17 @@ Produce ONLY the corrected JSON output following the format specified in the sys
             except Exception as e:
                 logger.error(f"Error in conversation summarization: {e}")
                 # Don't fail the request due to summarization errors
+
+        # Re-inject cached summary on every turn
+        if hasattr(self, "_conversation_summaries"):
+            conversation_id = getattr(self, "_current_conversation_id", None) or body.get("chat_id") or body.get("conversation_id") or "default"
+            cache_key = f"{user_id}_{conversation_id}"
+            cached = self._conversation_summaries.get(cache_key)
+            if cached:
+                self._inject_summary_into_context(body, cached["summary"])
+                logger.debug(f"Re-injected cached summary for {cache_key}")
+
+
 
         # --- Memory Injection --- #
         if (
@@ -5240,7 +5489,7 @@ Produce ONLY the corrected JSON output following the format specified in the sys
                                 },
                             },
                         )
-                    self._inject_memories_into_context(body, relevant_memories)
+                    await self._inject_memories_into_context(body, relevant_memories)
                 else:
                     logger.debug(f"No relevant memories found for user {user_id}")
                     if show_status:
@@ -5480,7 +5729,7 @@ Produce ONLY the corrected JSON output following the format specified in the sys
             # If we found relevant memories and the user wants to see them
             if memories and self.valves.show_memories:
                 # Inject memories into the context for the next interaction
-                self._inject_memories_into_context(body_copy, memories)
+                await self._inject_memories_into_context(body_copy, memories)
                 logger.debug(f"Injected {len(memories)} memories into context")
         except Exception as e:
             logger.error(
@@ -5593,8 +5842,7 @@ Produce ONLY the corrected JSON output following the format specified in the sys
             await asyncio.sleep(2)  # Give plugin time to fully initialize
             
             # Check if we've already completed a full retroactive embedding recently
-            log_dir = self._get_error_log_dir()
-            embeddings_log_path = os.path.join(log_dir, "embeddings_completed.log")
+            embeddings_log_path = os.path.join(get_log_dir(), "embeddings_completed.log")
             try:
                 if os.path.exists(embeddings_log_path):
                     with open(embeddings_log_path, "r") as f:
@@ -5660,8 +5908,12 @@ Produce ONLY the corrected JSON output following the format specified in the sys
                         else None
                     )
 
-                    # Get a fresh embedding from LM Studio to check dimension compatibility
-                    fresh_emb, emb_error = await self.get_nomic_embedding(mem_text)
+                    # Only get fresh embedding if not cached; reuse cached if available
+                    if existing_emb is None:
+                        fresh_emb, emb_error = await self.get_nomic_embedding(mem_text)
+                    else:
+                        fresh_emb = existing_emb
+                        emb_error = None
 
                     # If we can't get fresh embedding, log error and skip this memory
                     if fresh_emb is None:
@@ -5773,19 +6025,19 @@ Produce ONLY the corrected JSON output following the format specified in the sys
                     error_count += 1
                     logger.warning(f"Error processing memory {mem_id}: {e}")
                     continue
+
             logger.info(
                 f"✓ Retroactive embedding complete: {embedded_count} new, {regenerated_count} regenerated, {skipped_count} valid, {error_count} errors"
             )
             
             # Write completion timestamp to log file
             try:
-                log_dir = self._get_error_log_dir()
-                embeddings_log_path = os.path.join(log_dir, "embeddings_completed.log")
+                embeddings_log_path = os.path.join(get_log_dir(), "embeddings_completed.log")
                 from datetime import datetime
                 completion_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 with open(embeddings_log_path, "w") as f:
                     f.write(completion_time)
-                logger.info(f"📝 Wrote embedding completion timestamp: {completion_time}")
+                logger.info(f"\u270d Wrote embedding completion timestamp: {completion_time}")
             except Exception as e:
                 logger.warning(f"Could not write embeddings_completed.log: {e}")
 
@@ -5793,6 +6045,420 @@ Produce ONLY the corrected JSON output following the format specified in the sys
             logger.error(
                 f"Fatal error during retroactive embedding: {e}\n{traceback.format_exc()}"
             )
+
+    def _is_ok_to_run_background_task(self) -> bool:
+            """Check if conditions are right to run heavy background tasks.
+            Requires midnight-6am Central time and 10 min inlet inactivity."""
+            try:
+                now = datetime.now(ZoneInfo("America/Chicago"))
+                if not (0 <= now.hour < 6):
+                    logger.debug(f"Background task gated — outside quiet hours (current hour: {now.hour})")
+                    return False
+                if self._last_inlet_time is not None:
+                    idle_seconds = (datetime.now(timezone.utc) - self._last_inlet_time).total_seconds()
+                    if idle_seconds < 600:
+                        logger.debug(f"Background task gated — inlet active {idle_seconds:.0f}s ago")
+                        return False
+                return True
+            except Exception as e:
+                logger.debug(f"Error in _is_ok_to_run_background_task: {e}")
+                return False
+
+    async def _retroactively_normalize_old_memories(self):
+            """Retroactively normalize old-format memories to current format.
+            
+            Targets memories missing [Memory Bank:] tag — the most reliable marker
+            of old format. For each one, asks the LLM to infer tags and memory bank
+            from the content, then reassembles the memory in current format with the
+            original content preserved exactly — no rewriting, no paraphrasing.
+            
+            Uses a completion marker to avoid re-running unnecessarily.
+            """
+            NORMALIZATION_LOG = os.path.join(get_log_dir(), "memory_normalization_completed.log")
+            
+            try:
+                await asyncio.sleep(15)  # Wait longer than embedding task to avoid overlap
+
+                # Wait for quiet hours and inlet inactivity
+                logger.info("⏳ Waiting for quiet hours (midnight-6am) and 10 min inlet inactivity...")
+                while not self._is_ok_to_run_background_task():
+                    await asyncio.sleep(300)  # Check every 5 minutes               
+                
+                # Check if already completed
+                if os.path.exists(NORMALIZATION_LOG):
+                    logger.info("⏭️  Skipping retroactive memory normalization — already completed.")
+                    return
+                
+                logger.info("🔄 Starting retroactive normalization of old-format memories...")
+                
+                try:
+                    all_memories = Memories.get_memories()
+                except Exception as e:
+                    logger.warning(f"Could not retrieve memories for normalization: {e}")
+                    return
+                
+                if not all_memories:
+                    logger.info("No memories found for normalization.")
+                    return
+                
+                # Target only memories missing [Memory Bank:]
+                needs_normalization = []
+                for memory in all_memories:
+                    content = getattr(memory, "content", "") or ""
+                    if "[Memory Bank:" not in content:
+                        needs_normalization.append(memory)
+                
+                logger.info(
+                    f"📊 Found {len(needs_normalization)} memories needing normalization "
+                    f"out of {len(all_memories)} total"
+                )
+                
+                if not needs_normalization:
+                    logger.info("All memories already normalized.")
+                    with open(NORMALIZATION_LOG, "w") as f:
+                        f.write(datetime.now(timezone.utc).isoformat())
+                    return
+                
+                normalized_count = 0
+                skipped_count = 0
+                error_count = 0
+                
+                system_prompt = (
+                    "You are a memory categorization assistant. Given a memory string, infer the most appropriate "
+                    "tags and memory bank. Preserve the original content exactly — do not rewrite or paraphrase it.\n\n"
+                    "Available memory banks: General, Personal, Work, Projects, Technical, Tasks, Research, "
+                    "Context, Patterns, Preferences, Temporary, Character, Character_Interaction\n\n"
+                    "Available tags: identity, preference, behavior, relationship, goal, possession, project, "
+                    "technical_state, episode, context, pattern, skill, safety, user_directive\n\n"
+                    "Respond with JSON only — no explanation, no markdown:\n"
+                    "{\"tags\": [\"tag1\", \"tag2\"], \"memory_bank\": \"BankName\"}"
+                )
+                
+                for memory in needs_normalization:
+                    try:
+                        mem_id = str(getattr(memory, "id", None))
+                        mem_content = getattr(memory, "content", "") or ""
+                        mem_user_id = str(getattr(memory, "user_id", None) or "")
+                        
+                        if not mem_id or not mem_content:
+                            skipped_count += 1
+                            continue
+                        
+                        # Strip any existing [Tags:] from content for clean reassembly
+                        # but preserve everything else including first-person phrasing
+                        existing_tags = []
+                        tags_match = re.match(r'^\[Tags:\s*([^\]]+)\]\s*', mem_content)
+                        if tags_match:
+                            existing_tags = [t.strip() for t in tags_match.group(1).split(",")]
+                            bare_content = mem_content[tags_match.end():]
+                        else:
+                            bare_content = mem_content
+                        
+                        user_prompt = f"Memory: {mem_content}"
+                        
+                        response = await self.query_llm_with_retry(system_prompt, user_prompt)
+                        
+                        # Parse LLM response
+                        try:
+                            # Strip markdown fences if present
+                            clean_response = re.sub(r'```json|```', '', response).strip()
+                            parsed = json.loads(clean_response)
+                            inferred_tags = parsed.get("tags", [])
+                            inferred_bank = parsed.get("memory_bank", "General")
+                            
+                            # Merge with any existing tags, deduplicate
+                            all_tags = list(dict.fromkeys(existing_tags + inferred_tags))
+                            
+                            # Validate bank
+                            valid_banks = {
+                                "General", "Personal", "Work", "Projects", "Technical",
+                                "Tasks", "Research", "Context", "Patterns", "Preferences",
+                                "Temporary", "Character", "Character_Interaction"
+                            }
+                            if inferred_bank not in valid_banks:
+                                inferred_bank = "General"
+                            
+                        except Exception as parse_err:
+                            logger.debug(f"Could not parse normalization response for {mem_id}: {parse_err}. Using defaults.")
+                            all_tags = existing_tags or ["general"]
+                            inferred_bank = "General"
+                        
+                        # Reassemble in current format — content preserved exactly
+                        tag_part = f"[Tags: {', '.join(all_tags)}] " if all_tags else ""
+                        updated_content = f"{tag_part}{bare_content} [Memory Bank: {inferred_bank}]"
+                        
+                        result = Memories.update_memory_by_id_and_user_id(
+                            id=mem_id,
+                            user_id=mem_user_id or "all",
+                            content=updated_content,
+                            db=None
+                        )
+                        
+                        if result:
+                            logger.debug(f"✅ Normalized memory {mem_id} -> Bank: {inferred_bank}, Tags: {all_tags}")
+                            normalized_count += 1
+                        else:
+                            logger.warning(f"Failed to update memory {mem_id} during normalization")
+                            error_count += 1
+                        
+                        await asyncio.sleep(0.5)
+                        
+                    except Exception as e:
+                        logger.error(f"Error normalizing memory {mem_id}: {e}")
+                        error_count += 1
+                        continue
+                
+                logger.info(
+                    f"✅ Retroactive normalization complete. "
+                    f"Normalized: {normalized_count}, Skipped: {skipped_count}, Errors: {error_count}"
+                )
+                
+                # Write completion marker
+                with open(NORMALIZATION_LOG, "w") as f:
+                    f.write(datetime.now(timezone.utc).isoformat())
+            
+            except asyncio.CancelledError:
+                logger.info("Retroactive memory normalization task cancelled.")
+            except Exception as e:
+                logger.error(f"Fatal error in retroactive memory normalization: {e}\n{traceback.format_exc()}")
+
+    async def _retroactively_score_memory_importance(self):
+            """Retroactively assign importance scores to existing memories that lack them.
+            
+            For each memory missing an [Importance: N] tag:
+            1. Check memory_conversation_links for a linked conversation
+            2. If found, pull conversation messages as context for LLM scoring
+            3. If not found, fall back to timestamp matching against conversations DB
+            4. LLM assigns score, memory content is updated with [Importance: N] appended
+            
+            Uses a completion marker to avoid re-running unnecessarily.
+            """
+            IMPORTANCE_SCORE_LOG = os.path.join(get_log_dir(), "importance_scoring_completed.log")
+            
+            try:
+                await asyncio.sleep(15)  # Wait for plugin to fully initialize
+            
+                # Wait for normalization to complete first
+                NORMALIZATION_LOG = os.path.join(get_log_dir(), "memory_normalization_completed.log")
+                wait_count = 0
+                logger.info("⏳ Importance scoring waiting for normalization to complete...")
+                while not os.path.exists(NORMALIZATION_LOG) and wait_count < 720:
+                    await asyncio.sleep(30)
+                    wait_count += 1
+                
+                if wait_count >= 720:
+                    logger.warning("Importance scoring timed out waiting for normalization. Proceeding anyway.")
+                else:
+                    logger.info("✅ Normalization complete — starting importance scoring.")
+                    # Wait for quiet hours and inlet inactivity
+                    logger.info("⏳ Waiting for quiet hours (midnight-6am) and 10 min inlet inactivity...")
+                    while not self._is_ok_to_run_background_task():
+                        await asyncio.sleep(300)  # Check every 5 minutes
+                
+                # Check if already completed
+                if os.path.exists(IMPORTANCE_SCORE_LOG):
+                    logger.info("⏭️  Skipping retroactive importance scoring — already completed.")
+                    return
+                
+                logger.info("🔄 Starting retroactive importance scoring of existing memories...")
+                
+                # Get all memories
+                try:
+                    all_memories = Memories.get_memories()
+                except Exception as e:
+                    logger.warning(f"Could not retrieve memories for importance scoring: {e}")
+                    return
+                
+                if not all_memories:
+                    logger.info("No memories found for importance scoring.")
+                    return
+                
+                # Filter to only memories missing [Importance: N]
+                needs_scoring = []
+                for memory in all_memories:
+                    content = getattr(memory, "content", "") or ""
+                    if "[Importance:" not in content:
+                        needs_scoring.append(memory)
+                
+                logger.info(f"📊 Found {len(needs_scoring)} memories needing importance scores out of {len(all_memories)} total")
+                
+                if not needs_scoring:
+                    logger.info("All memories already have importance scores.")
+                    with open(IMPORTANCE_SCORE_LOG, "w") as f:
+                        f.write(datetime.now(timezone.utc).isoformat())
+                    return
+                
+                scored_count = 0
+                fallback_count = 0
+                default_count = 0
+                error_count = 0
+                
+                # Initialize conversation DB for context lookups
+                try:
+                    conversation_db = ConversationDatabase()
+                except Exception as e:
+                    logger.error(f"Could not initialize ConversationDatabase for importance scoring: {e}")
+                    return
+                
+                BATCH_SIZE = 10
+
+                # Build batches
+                batches = [needs_scoring[i:i + BATCH_SIZE] for i in range(0, len(needs_scoring), BATCH_SIZE)]
+                logger.info(f"Processing {len(needs_scoring)} memories in {len(batches)} batches of {BATCH_SIZE}")
+
+                system_prompt = (
+                    "You are a memory importance scorer. Given a list of memories, assign an importance "
+                    "score from 1 to 10 to each one.\n\n"
+                    "Scoring guide:\n"
+                    "- 1-2: Trivial, temporary (e.g. user ate pizza today)\n"
+                    "- 3-4: Minor details (e.g. user was running late)\n"
+                    "- 5-6: Moderate importance (e.g. user prefers morning meetings)\n"
+                    "- 7-8: Important preferences or patterns (e.g. user has ADHD, user loves coding)\n"
+                    "- 9-10: Critical identity or constraints (e.g. user had strokes, primary goals)\n\n"
+                    "Respond with a JSON array of objects only. No explanation. No markdown. Example:\n"
+                    "[{\"index\": 0, \"score\": 7}, {\"index\": 1, \"score\": 3}]"
+                )
+
+                for batch in batches:
+                    try:
+                        # Gather context for each memory in the batch
+                        batch_entries = []
+                        for memory in batch:
+                            try:
+                                mem_id = str(getattr(memory, "id", None))
+                                mem_content = getattr(memory, "content", "") or ""
+                                mem_user_id = str(getattr(memory, "user_id", None) or "")
+                                created_at = getattr(memory, "created_at", None)
+
+                                if not mem_id or not mem_content:
+                                    continue
+
+                                conversation_context = ""
+
+                                # Try linked conversation first
+                                try:
+                                    links = await conversation_db.execute_query(
+                                        "SELECT conversation_id FROM memory_conversation_links WHERE memory_id = ? LIMIT 1",
+                                        (mem_id,)
+                                    )
+                                    if links:
+                                        conv_id = links[0]["conversation_id"]
+                                        messages = await conversation_db.execute_query(
+                                            "SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY timestamp ASC LIMIT 10",
+                                            (conv_id,)
+                                        )
+                                        if messages:
+                                            conversation_context = " | ".join(
+                                                f"{m['role']}: {m['content'][:100]}" for m in messages
+                                            )
+                                            scored_count += 1
+                                except Exception as e:
+                                    logger.debug(f"Could not retrieve linked conversation for memory {mem_id}: {e}")
+
+                                # Timestamp fallback
+                                if not conversation_context and created_at:
+                                    try:
+                                        ts = created_at if isinstance(created_at, (int, float)) else created_at.timestamp()
+                                        messages = await conversation_db.execute_query(
+                                            """SELECT role, content FROM messages 
+                                            WHERE user_id = ? 
+                                            AND CAST(strftime('%s', timestamp) AS INTEGER) BETWEEN ? AND ?
+                                            ORDER BY timestamp ASC LIMIT 10""",
+                                            (mem_user_id, int(ts) - 300, int(ts) + 300)
+                                        )
+                                        if messages:
+                                            conversation_context = " | ".join(
+                                                f"{m['role']}: {m['content'][:100]}" for m in messages
+                                            )
+                                            fallback_count += 1
+                                    except Exception as e:
+                                        logger.debug(f"Timestamp fallback failed for memory {mem_id}: {e}")
+                                else:
+                                    default_count += 1
+
+                                batch_entries.append({
+                                    "mem_id": mem_id,
+                                    "mem_user_id": mem_user_id,
+                                    "content": mem_content,
+                                    "context": conversation_context
+                                })
+
+                            except Exception as e:
+                                logger.error(f"Error preparing memory for batch: {e}")
+                                error_count += 1
+                                continue
+
+                        if not batch_entries:
+                            continue
+
+                        # Build batch user prompt
+                        memories_text = ""
+                        for idx, entry in enumerate(batch_entries):
+                            if entry["context"]:
+                                memories_text += (
+                                    f"[{idx}] Memory: {entry['content']}\n"
+                                    f"    Context: {entry['context']}\n\n"
+                                )
+                            else:
+                                memories_text += f"[{idx}] Memory: {entry['content']}\n\n"
+
+                        user_prompt = f"Score these memories:\n\n{memories_text}"
+
+                        response = await self.query_llm_with_retry(system_prompt, user_prompt)
+
+                        # Parse batch response
+                        try:
+                            clean_response = re.sub(r'```json|```', '', response).strip()
+                            scores_list = json.loads(clean_response)
+                            scores_map = {item["index"]: item["score"] for item in scores_list}
+                        except Exception as parse_err:
+                            logger.warning(f"Could not parse batch score response: {parse_err}. Defaulting all to 5.")
+                            scores_map = {i: 5 for i in range(len(batch_entries))}
+
+                        # Apply scores
+                        for idx, entry in enumerate(batch_entries):
+                            try:
+                                score = scores_map.get(idx, 5)
+                                # Clamp to valid range
+                                score = max(1, min(10, int(score)))
+                                updated_content = f"{entry['content']} [Importance: {score}]"
+                                result = Memories.update_memory_by_id_and_user_id(
+                                    id=entry["mem_id"],
+                                    user_id=entry["mem_user_id"] or "all",
+                                    content=updated_content,
+                                    db=None
+                                )
+                                if result:
+                                    logger.debug(f"✅ Scored memory {entry['mem_id']} with importance {score}")
+                                else:
+                                    logger.warning(f"Failed to update memory {entry['mem_id']}")
+                                    error_count += 1
+                            except Exception as e:
+                                logger.error(f"Error applying score for memory {entry['mem_id']}: {e}")
+                                error_count += 1
+
+                        # Delay between batches not individual memories
+                        await asyncio.sleep(1)
+
+                    except Exception as e:
+                        logger.error(f"Error processing batch: {e}")
+                        error_count += 1
+                        continue
+                
+                logger.info(
+                    f"✅ Retroactive importance scoring complete. "
+                    f"Linked context: {scored_count}, Timestamp fallback: {fallback_count}, "
+                    f"Content only: {default_count}, Errors: {error_count}"
+                )
+                
+                # Write completion marker
+                with open(IMPORTANCE_SCORE_LOG, "w") as f:
+                    f.write(datetime.now(timezone.utc).isoformat())
+            
+            except asyncio.CancelledError:
+                logger.info("Retroactive importance scoring task cancelled.")
+            except Exception as e:
+                logger.error(f"Fatal error in retroactive importance scoring: {e}\n{traceback.format_exc()}")
 
     async def _get_formatted_memories(self, user_id: str) -> List[Dict[str, Any]]:
         """Get all memories for a user and format them for processing"""
@@ -5845,7 +6511,7 @@ Produce ONLY the corrected JSON output following the format specified in the sys
         cleaned = re.sub(r'\s*\[Model:\s*[^\]]+\]', '', memory_content)
         return cleaned.strip()
 
-    def _inject_memories_into_context(
+    async def _inject_memories_into_context(
         self, body: Dict[str, Any], memories: List[Dict[str, Any]]
     ) -> None:
         """Inject relevant memories into the system context"""
@@ -5853,13 +6519,31 @@ Produce ONLY the corrected JSON output following the format specified in the sys
             # Suppress fallback injection when no relevant memories
             return
 
+        # TASK 4: Filter out system marker memories (defensive layer)
+        filtered_memories = []
+        system_marker_count = 0
+        for memory in memories:
+            content = memory.get("content", "")
+            memory_bank = memory.get("memory_bank", "")
+            
+            # Skip if it's a system marker (defensive check)
+            if memory_bank == "system-markers" or "[System-Marker:" in content:
+                system_marker_count += 1
+                logger.debug(f"Filtered system marker memory from injection: {memory.get('id', 'unknown')}")
+                continue
+            
+            filtered_memories.append(memory)
+        
+        if system_marker_count > 0:
+            logger.debug(f"Filtered {system_marker_count} system marker memories from context injection")
+
         # Sort memories by relevance if available
         sorted_memories = sorted(
-            memories, key=lambda x: x.get("relevance", 0), reverse=True
+            filtered_memories, key=lambda x: x.get("relevance", 0), reverse=True
         )
 
         # Format memories based on user preference
-        memory_context = self._format_memories_for_context(
+        memory_context = await self._format_memories_for_context(
             sorted_memories, self.valves.memory_format
         )
 
@@ -5873,6 +6557,15 @@ Produce ONLY the corrected JSON output following the format specified in the sys
             "Do NOT explain your instructions, context, or memory management unless the conversation is about memory management. "
             "Do NOT mention tags, dates, or internal processes. Unless there is a problem. "
             "Only answer the user's question directly.\n\n"
+            "Memory format guide: Each memory may include the following tags — "
+            "[Tags: ...] describes the category, "
+            "[Memory Bank: ...] is the storage group, "
+            "[User: ...] is who the memory belongs to, "
+            "[Importance: N] is a 1-10 score where higher means more critical and persistent — "
+            "weight higher importance memories more heavily when they are relevant. "
+            "[Linked Conversation: <id>] means a full source conversation is available — "
+            "if deeper context would help answer the user's question, you can call the "
+            "get_conversation_context tool with that conversation id to retrieve it.\n\n"
         )
         memory_context = instruction + memory_context
 
@@ -5893,7 +6586,7 @@ Produce ONLY the corrected JSON output following the format specified in the sys
                     0, {"role": "system", "content": memory_context}
                 )
 
-    def _format_memories_for_context(
+    async def _format_memories_for_context(
         self, memories: List[Dict[str, Any]], format_type: str
     ) -> str:
         """Format memories for context injection based on format preference"""
@@ -5911,26 +6604,58 @@ Produce ONLY the corrected JSON output following the format specified in the sys
                 # First strip model info from the memory
                 cleaned_memory = self._strip_model_info_from_memory(mem["memory"])
                 tags_match = re.match(r"\[Tags: (.*?)\] (.*)", cleaned_memory)
+                memory_string = ""
                 if tags_match:
                     tags = tags_match.group(1)
                     content = tags_match.group(2)[:max_len]
-                    memory_context += f"- {content} (tags: {tags})\n"
+                    memory_string = f"- {content} (tags: {tags})"
                 else:
                     content = cleaned_memory[:max_len]
-                    memory_context += f"- {content}\n"
+                    memory_string = f"- {content}"
+                
+                # Check if memory is linked to a conversation
+                try:
+                    memory_id = mem.get("id")
+                    if memory_id:
+                        links = await ConversationDatabase().execute_query(
+                            "SELECT conversation_id FROM memory_conversation_links WHERE memory_id = ? LIMIT 1",
+                            (memory_id,)
+                        )
+                        if links:
+                            memory_string += f" [Linked Conversation: {links[0]['conversation_id']}]"
+                except Exception as e:
+                    logger.debug(f"Could not check linked conversation for memory {mem.get('id')}: {e}")
+                
+                memory_context += memory_string + "\n"
 
         elif format_type == "numbered":
             for i, mem in enumerate(memories, 1):
                 # First strip model info from the memory
                 cleaned_memory = self._strip_model_info_from_memory(mem["memory"])
                 tags_match = re.match(r"\[Tags: (.*?)\] (.*)", cleaned_memory)
+                memory_string = ""
                 if tags_match:
                     tags = tags_match.group(1)
                     content = tags_match.group(2)[:max_len]
-                    memory_context += f"{i}. {content} (tags: {tags})\n"
+                    memory_string = f"{i}. {content} (tags: {tags})"
                 else:
                     content = cleaned_memory[:max_len]
-                    memory_context += f"{i}. {content}\n"
+                    memory_string = f"{i}. {content}"
+                
+                # Check if memory is linked to a conversation
+                try:
+                    memory_id = mem.get("id")
+                    if memory_id:
+                        links = await ConversationDatabase().execute_query(
+                            "SELECT conversation_id FROM memory_conversation_links WHERE memory_id = ? LIMIT 1",
+                            (memory_id,)
+                        )
+                        if links:
+                            memory_string += f" [Linked Conversation: {links[0]['conversation_id']}]"
+                except Exception as e:
+                    logger.debug(f"Could not check linked conversation for memory {mem.get('id')}: {e}")
+                
+                memory_context += memory_string + "\n"
 
         else:  # paragraph format
             memories_text = []
@@ -5938,12 +6663,28 @@ Produce ONLY the corrected JSON output following the format specified in the sys
                 # First strip model info from the memory
                 cleaned_memory = self._strip_model_info_from_memory(mem["memory"])
                 tags_match = re.match(r"\[Tags: (.*?)\] (.*)", cleaned_memory)
+                memory_string = ""
                 if tags_match:
                     content = tags_match.group(2)[:max_len]
-                    memories_text.append(content)
+                    memory_string = content
                 else:
                     content = cleaned_memory[:max_len]
-                    memories_text.append(content)
+                    memory_string = content
+                
+                # Check if memory is linked to a conversation
+                try:
+                    memory_id = mem.get("id")
+                    if memory_id:
+                        links = await ConversationDatabase().execute_query(
+                            "SELECT conversation_id FROM memory_conversation_links WHERE memory_id = ? LIMIT 1",
+                            (memory_id,)
+                        )
+                        if links:
+                            memory_string += f" [Linked Conversation: {links[0]['conversation_id']}]"
+                except Exception as e:
+                    logger.debug(f"Could not check linked conversation for memory {mem.get('id')}: {e}")
+                
+                memories_text.append(memory_string)
 
             memory_context += f"{'. '.join(memories_text)}.\n"
 
@@ -6526,8 +7267,8 @@ Rate the relevance of EACH memory to the current user message."""
                                 try:
                                     memory_content = memory_to_promote.get("memory", "")
                                     if memory_content:
-                                        from friday_memory_system import FridayMemorySystem
-                                        memory_system = FridayMemorySystem()
+                                        from ai_memory_core import AIMemorySystem
+                                        memory_system = AIMemorySystem()
                                         
                                         # Step 1: Promote to Friday
                                         promoted_friday_id = await memory_system.create_memory(
@@ -6831,6 +7572,12 @@ PERSPECTIVE INSTRUCTION: You are extracting memories from Friday's perspective.
 
             categories_str = ", ".join(categories)
 
+            # TASK 2 & 3: Inject discovered memory banks into the prompt context
+            # Build a human-readable list of discovered banks from the dynamic registry
+            discovered_banks_list = sorted(self._discovered_memory_banks)
+            banks_str = ", ".join([bank.capitalize() for bank in discovered_banks_list])
+            banks_context = f"Available memory banks: {banks_str}\n(Note: These are dynamically discovered; new banks will be auto-registered on first use)"
+
             # Add existing memories context if provided
             existing_memories_str = ""
             if existing_memories and len(existing_memories) > 0:
@@ -6840,11 +7587,12 @@ PERSPECTIVE INSTRUCTION: You are extracting memories from Friday's perspective.
                 ):  # Limit to 5 recent memories
                     existing_memories_str += f"- {mem.get('content', 'Unknown')}\n"
 
-            # Combine all context
-            context = f"{datetime_context}\nEnabled categories: {categories_str}\n{existing_memories_str}{model_perspective}"
+            # Combine all context with injected discovered banks
+            context = f"{datetime_context}\nEnabled categories: {categories_str}\n{banks_context}\n{existing_memories_str}{model_perspective}"
 
             # Log the components of the prompt
             logger.debug(f"Memory identification context: {context}")
+            logger.debug(f"Discovered banks being used in prompt: {banks_str}")
 
             # Create the final system prompt with context
             system_prompt = f"{memory_prompt}\n\nCONTEXT:\n{context}"
@@ -7088,11 +7836,9 @@ Produce ONLY the JSON object output with status/reason/memories, adhering strict
                     
                     # Check if we should halt
                     if self._check_should_halt_for_errors(self._current_model_card_name):
-                        log_dir = self._get_error_log_dir()
-                        error_file_path = os.path.join(log_dir, "memory_validation_errors.json")
                         logger.critical(
                             f"❌ HALTING: Too many validation errors for {self._current_model_card_name}. "
-                            f"Check {error_file_path} and set 'resolved' to true when fixed."
+                            f"Check {os.path.join(get_log_dir(), 'memory_validation_errors.json')} and set 'resolved' to true when fixed."
                         )
                         return []  # Return empty, stop processing
                     
@@ -7250,27 +7996,36 @@ Produce ONLY the JSON object output with status/reason/memories, adhering strict
                 )
                 op["tags"] = []  # Default to empty list
 
-        # Validate memory_bank field
+        # TASK 2 & 3: Validate and normalize memory_bank field using dynamic registry
         provided_bank = None
         if "memory_bank" in op and isinstance(op["memory_bank"], str):
-            provided_bank = (
-                op["memory_bank"].strip().capitalize()
-            )  # Normalize: strip whitespace, capitalize first letter
-            # If memory_bank is provided, validate against allowed banks
-            if provided_bank not in self.valves.allowed_memory_banks:
-                logger.warning(
-                    f"Invalid memory bank '{op['memory_bank']}' (normalized to '{provided_bank}'), using default '{self.valves.default_memory_bank}'"
+            # TASK 2: Normalize to lowercase (consistent with model/user normalization)
+            provided_bank = self._normalize_name(op["memory_bank"].strip())
+            
+            # TASK 3: Check against discovered banks
+            if provided_bank not in self._discovered_memory_banks:
+                # Bank not yet in registry - attempt auto-registration
+                logger.info(
+                    f"Found new memory bank '{provided_bank}', attempting auto-registration..."
                 )
-                op["memory_bank"] = self.valves.default_memory_bank
+                if self._register_new_bank(provided_bank):
+                    op["memory_bank"] = provided_bank
+                    logger.info(f"✓ Auto-registered and using new bank: {provided_bank}")
+                else:
+                    # Auto-registration failed, fallback to 'general'
+                    logger.warning(
+                        f"Auto-registration failed for '{provided_bank}', falling back to 'general'"
+                    )
+                    op["memory_bank"] = "general"
             else:
-                # Assign the normalized valid bank name
+                # Bank already in registry, use provided normalized bank
                 op["memory_bank"] = provided_bank
         else:
-            # If memory_bank is missing or not a string, set default
+            # If memory_bank is missing or not a string, set default to 'general'
             logger.debug(
-                f"Memory bank missing or invalid type ({type(op.get('memory_bank'))}), using default '{self.valves.default_memory_bank}'"
+                f"Memory bank missing or invalid type ({type(op.get('memory_bank'))}), using default 'general'"
             )
-            op["memory_bank"] = self.valves.default_memory_bank
+            op["memory_bank"] = "general"
 
         return True
 
@@ -7818,11 +8573,16 @@ Produce ONLY the JSON object output with status/reason/memories, adhering strict
                             filtered_mem["id"] == mem["id"]
                             for filtered_mem in filtered_by_vector
                         ):
+                            importance_boost = 0.0
+                            importance_match = re.search(r'\[Importance:\s*(\d+)\]', mem.get("memory", ""))
+                            if importance_match:
+                                importance_level = int(importance_match.group(1))
+                                importance_boost = (importance_level / 10.0) * 0.1  # Max 0.1 boost
                             relevant_memories.append(
                                 {
                                     "id": mem["id"],
                                     "memory": mem["memory"],
-                                    "relevance": sim_score,
+                                    "relevance": sim_score + importance_boost,
                                 }  # Use vector score as relevance
                             )
 
@@ -8076,10 +8836,6 @@ Current datetime: {current_datetime.strftime('%A, %B %d, %Y %H:%M:%S')} ({curren
                                             )
                                         )
                                         self.relevance_cache[key] = (score, now)
-                                        # Update reverse index for cache invalidation
-                                        if mem_id not in self.memory_to_cache_keys:
-                                            self.memory_to_cache_keys[mem_id] = set()
-                                        self.memory_to_cache_keys[mem_id].add(key)
                                     else:
                                         logger.debug(
                                             f"Cannot cache relevance for {mem_id}, embedding missing."
@@ -8114,11 +8870,16 @@ Current datetime: {current_datetime.strftime('%A, %B %d, %Y %H:%M:%S')} ({curren
                             relevance_score >= final_relevance_threshold
                             and mem_id not in seen_ids
                         ):
+                            importance_boost = 0.0
+                            importance_match = re.search(r'\[Importance:\s*(\d+)\]', memory_content or "")
+                            if importance_match:
+                                importance_level = int(importance_match.group(1))
+                                importance_boost = (importance_level / 10.0) * 0.1
                             final_relevant_memories.append(
                                 {
                                     "id": mem_id,
                                     "memory": memory_content,
-                                    "relevance": relevance_score,
+                                    "relevance": relevance_score + importance_boost,
                                 }
                             )
                             seen_ids.add(mem_id)
@@ -8284,12 +9045,34 @@ Current datetime: {current_datetime.strftime('%A, %B %d, %Y %H:%M:%S')} ({curren
                                 logger.debug(
                                     f"  -> Duplicate found vs existing mem {existing_idx} (Similarity: {similarity_score:.3f}, Method: {similarity_method}, Threshold: {threshold_to_use})"
                                 )
-                                logger.debug(
-                                    f"Skipping duplicate NEW memory (similarity: {similarity_score:.2f}, method: {similarity_method}): {formatted_content[:50]}..."
-                                )
                                 is_duplicate = True
-                                # Increment duplicate skipped counter for status reporting
-                                self._duplicate_skipped += 1
+
+                                # Check if new memory has higher importance than existing
+                                new_importance = memory_dict.get("relevance_score") or 0
+                                existing_mem = existing_memories[existing_idx]
+                                existing_importance = 0
+                                importance_match = re.search(r'\[Importance:\s*(\d+)\]', existing_mem.get("memory", ""))
+                                if importance_match:
+                                    existing_importance = int(importance_match.group(1))
+
+                                if new_importance > existing_importance:
+                                    # New context is more urgent — promote to UPDATE instead of dropping
+                                    logger.info(
+                                        f"  -> Duplicate but higher importance ({new_importance} > {existing_importance}). "
+                                        f"Converting to UPDATE: {formatted_content[:50]}..."
+                                    )
+                                    update_op = dict(memory_dict)
+                                    update_op["operation"] = "UPDATE"
+                                    update_op["id"] = existing_mem.get("id")
+                                    processed_memories.append(update_op)
+                                    self._duplicate_refreshed += 1
+                                else:
+                                    logger.debug(
+                                        f"Skipping duplicate NEW memory (similarity: {similarity_score:.2f}, "
+                                        f"importance: {new_importance} <= {existing_importance}): {formatted_content[:50]}..."
+                                    )
+                                    self._duplicate_skipped += 1
+
                                 break  # Stop checking against other existing memories for this new one
 
                         if not is_duplicate:
@@ -8298,9 +9081,13 @@ Current datetime: {current_datetime.strftime('%A, %B %d, %Y %H:%M:%S')} ({curren
                             )
                             processed_memories.append(memory_dict)
                         else:
-                            logger.debug(
-                                f"NEW memory was identified as duplicate and skipped: {formatted_content[:50]}..."
-                            )
+                            if not any(
+                                op.get("id") == existing_memories[existing_idx].get("id") and op.get("operation") == "UPDATE"
+                                for op in processed_memories
+                            ):
+                                logger.debug(
+                                    f"NEW memory was identified as duplicate and skipped: {formatted_content[:50]}..."
+                                )
                     else:
                         # Keep all UPDATE and DELETE operations
                         logger.debug(
@@ -8489,7 +9276,7 @@ Current datetime: {current_datetime.strftime('%A, %B %d, %Y %H:%M:%S')} ({curren
                         metadata={
                             "tags": tags_for_save,
                             "memory_bank": operation.memory_bank
-                            or self.valves.default_memory_bank,
+                            or "general",
                             "timestamp": datetime.now(timezone.utc).isoformat(),
                             "source": "adaptive_memory_v3",
                             "model_card_name": operation.model_card_name or "unknown",
@@ -8548,12 +9335,14 @@ Current datetime: {current_datetime.strftime('%A, %B %d, %Y %H:%M:%S')} ({curren
                                 memory_id=str(mem_id),
                                 conversation_id=conversation_id,
                                 link_type="direct",
+                                link_strength = (operation.relevance_score / 10.0) if operation.relevance_score else 1.0,
                                 metadata={
                                     "source": "adaptive_memory_v3",
                                     "model": getattr(self, '_current_model', 'default'),
                                     "tags": operation.tags,
                                     "memory_bank": operation.memory_bank
-                                    or self.valves.default_memory_bank,
+                                    or "general",
+                                    "timestamp": datetime.now(timezone.utc).isoformat(),
                                 },
                             )
                             logger.debug(
@@ -8633,11 +9422,13 @@ Current datetime: {current_datetime.strftime('%A, %B %d, %Y %H:%M:%S')} ({curren
                                     memory_id=str(new_mem_id),
                                     conversation_id=conversation_id,
                                     link_type="updated",
+                                    link_strength = (operation.relevance_score / 10.0) if operation.relevance_score else 1.0,
                                     metadata={
                                         "source": "adaptive_memory_v3",
                                         "model": getattr(self, '_current_model', 'default'),
                                         "previous_id": str(operation.id),
                                         "tags": operation.tags,
+                                        "timestamp": datetime.now(timezone.utc).isoformat(),
                                     },
                                 )
                                 logger.debug(
@@ -8689,14 +9480,13 @@ Current datetime: {current_datetime.strftime('%A, %B %d, %Y %H:%M:%S')} ({curren
             # Invalidate cache entries involving this memory
             mem_emb = self.memory_embeddings.get(operation.id)
             if mem_emb is not None:
-                # Use reverse index for precise cache invalidation
-                if operation.id in self.memory_to_cache_keys:
-                    for key in self.memory_to_cache_keys[operation.id]:
-                        if key in self.relevance_cache:
-                            del self.relevance_cache[key]
-                    # Clear reverse index entry
-                    del self.memory_to_cache_keys[operation.id]
-                    logger.debug(f"Invalidated {len(self.memory_to_cache_keys.get(operation.id, set()))} cache entries for updated memory {operation.id}")
+                keys_to_delete = []
+                for key, (score, ts) in self.relevance_cache.items():
+                    # key is hash of (user_emb, mem_emb)
+                    # We can't extract mem_emb from key, so approximate by deleting all keys with this mem_emb
+                    # Since we can't reverse hash, we skip this for now
+                    # Future: store reverse index or use tuple keys
+                    pass  # Placeholder for future precise invalidation
 
         elif operation.operation == "DELETE" and operation.id:
             try:
@@ -8706,14 +9496,10 @@ Current datetime: {current_datetime.strftime('%A, %B %d, %Y %H:%M:%S')} ({curren
                 # Invalidate cache entries involving this memory
                 mem_emb = self.memory_embeddings.get(operation.id)
                 if mem_emb is not None:
-                    # Use reverse index for precise cache invalidation
-                    if operation.id in self.memory_to_cache_keys:
-                        for key in self.memory_to_cache_keys[operation.id]:
-                            if key in self.relevance_cache:
-                                del self.relevance_cache[key]
-                        # Clear reverse index entry
-                        del self.memory_to_cache_keys[operation.id]
-                        logger.debug(f"Invalidated cache entries for deleted memory {operation.id}")
+                    keys_to_delete = []
+                    for key, (score, ts) in self.relevance_cache.items():
+                        # Same as above, placeholder
+                        pass
 
                 # Remove embedding
                 if operation.id in self.memory_embeddings:
@@ -8730,12 +9516,43 @@ Current datetime: {current_datetime.strftime('%A, %B %d, %Y %H:%M:%S')} ({curren
                 raise
 
     def _format_memory_content(self, operation: MemoryOperation) -> str:
-        """Format memory content with tags, memory bank, and model card name for saving / display"""
+        """Format memory content with tags, memory bank, model card name, and user name for saving / display"""
         content = operation.content or ""
         tag_part = f"[Tags: {', '.join(operation.tags)}] " if operation.tags else ""
-        bank_part = f" [Memory Bank: {operation.memory_bank or self.valves.default_memory_bank}]"
+        # TASK 3: Use 'general' as default fallback
+        bank_part = f" [Memory Bank: {operation.memory_bank or 'general'}]"
         model_part = f" [Model: {operation.model_card_name}]" if operation.model_card_name else ""
-        return f"{tag_part}{content}{bank_part}{model_part}".strip()
+        user_part = ""
+        # Add user name tag if extracted_user_name is available (Phase 1B)
+        if hasattr(operation, 'extracted_user_name') and operation.extracted_user_name:
+            user_part = f" [User: {operation.extracted_user_name}]"
+            importance_level = operation.relevance_score if operation.relevance_score else 5
+            importance_part = f" [Importance: {importance_level}]"
+        return f"{tag_part}{content}{bank_part}{user_part}{model_part}{importance_part}".strip()
+
+    def _extract_user_name_from_text(self, text: str) -> Optional[str]:
+        """Extract potential user names from memory text (Phase 1B helper).
+        
+        Uses regex patterns to find capitalized names appearing with user-context words.
+        Used by validation to repair memories with missing [User:] tags.
+        
+        Returns:
+            Extracted name string, or None if no clear user name found
+        """
+        import re
+        ai_names = {"friday", "tuesday", "amelia", "eddie", "tara", "jessie", "jamie", "willow", "roxy"}
+        patterns = [
+            r'^([A-Z][a-z]+)(?:\s+(?:likes|said|mentioned|told|has|is|was|will|can))\b',
+            r'\b([A-Z][a-z]+)(?:\s+(?:likes|said|mentioned|told|has|is|was|will|can))\b',
+            r'user[,:]?\s+([A-Z][a-z]+)',
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                name = match.group(1)
+                if name.lower() not in ai_names:
+                    return name
+        return None
 
     def _calculate_dynamic_timeout(self, system_prompt: str, user_prompt: str) -> int:
         """Calculate dynamic LLM timeout based on input size.
@@ -9196,7 +10013,6 @@ CRITICAL FORMATTING REQUIREMENT: You MUST respond with ONLY valid JSON. NO other
         # Clear memory caches to help with GC
         self._memory_embeddings = {}
         self._relevance_cache = {}
-        self._memory_to_cache_keys = {}
 
         logger.info("Friday Short Term Memory cleanup complete")
 
@@ -9232,13 +10048,15 @@ CRITICAL FORMATTING REQUIREMENT: You MUST respond with ONLY valid JSON. NO other
                         )  # Check common content keys
                         tags = item.get("tags", [])
                         memory_bank = item.get(
-                            "memory_bank", self.valves.default_memory_bank
+                            "memory_bank", "general"
                         )
 
-                        # Validate memory_bank
-                        if memory_bank not in self.valves.allowed_memory_banks:
-                            memory_bank = self.valves.default_memory_bank
-
+                        # TASK 2 & 3: Normalize and check against dynamic registry
+                        memory_bank = self._normalize_name(memory_bank)
+                        if memory_bank not in self._discovered_memory_banks:
+                            logger.debug(f"Bank '{memory_bank}' not in discovered banks, registering...")
+                            self._register_new_bank(memory_bank)
+                            
                         # Basic validation
                         if op not in ["NEW", "UPDATE", "DELETE"]:
                             continue
@@ -9327,11 +10145,12 @@ CRITICAL FORMATTING REQUIREMENT: You MUST respond with ONLY valid JSON. NO other
                         tag = "relationship"
 
                     # Simple bank inference
-                    memory_bank = self.valves.default_memory_bank
+                    # TASK 2 & 3: Default to 'general' and normalize discovered banks
+                    memory_bank = "general"
                     if lowered_key in work_keys:
-                        memory_bank = "Work"
+                        memory_bank = "work"
                     elif lowered_key in personal_keys:
-                        memory_bank = "Personal"
+                        memory_bank = "personal"
 
                     # Format simply: "Key: Value" unless key is generic
                     generic_keys = {

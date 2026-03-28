@@ -1,4 +1,10 @@
 {
+  "weather": {
+    "home_lat": 46.33301,
+    "home_lon": -94.64384,
+    "home_timezone": "America/Chicago",
+    "_comment": "Weather home location and timezone. Can be overridden with AI_MEMORY_HOME_LAT, AI_MEMORY_HOME_LON, AI_MEMORY_HOME_TZ env vars"
+  },
   "llm_provider_configuration": {
     "llm_provider_type": "ollama",
     "llm_api_endpoint_url": "http://localhost:11434/api/chat",
@@ -60,5 +66,16 @@
     "allowed_memory_banks": ["General", "Personal", "Work"],
     "default_memory_bank": "General",
     "_comment": "Memory banks for organizing memories by context"
+  },
+  "tool_requirements": {
+    "require_user_id": true,
+    "require_model_id": true,
+    "default_user_id": "default_user",
+    "default_model_id": "default_model",
+    "_comment": "If true, all memory operations REQUIRE user_id and model_id parameters. If false, defaults are used. Set these to false to disable strict isolation. RECOMMENDED: Keep true and add to AI system prompt."
+  },
+  "ai_system_prompt_recommendation": {
+    "_comment": "Add this to your AI's system prompt to auto-fill user_id and model_id:",
+    "template": "For all memory system operations, always include: user_id='your_user_identifier' and model_id='your_model_name'. If unknown, use user_id='default_user' and model_id='default_model'."
   }
 }

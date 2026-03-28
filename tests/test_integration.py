@@ -18,11 +18,11 @@ async def test_integration():
     
     try:
         # Import and initialize the memory system
-        from ai_memory_core import PersistentAIMemorySystem
-        print("✅ Successfully imported PersistentAIMemorySystem")
+        from ai_memory_core import AIMemorySystem
+        print("✅ Successfully imported AIMemorySystem")
         
         # Initialize with test directory
-        memory_system = PersistentAIMemorySystem(
+        memory_system = AIMemorySystem(
             data_dir=str(test_dir / "memory_data"),
             enable_file_monitoring=False
         )

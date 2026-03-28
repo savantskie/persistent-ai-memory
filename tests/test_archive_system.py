@@ -21,7 +21,7 @@ import os
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from ai_memory_core import PersistentAIMemorySystem, get_settings
+from ai_memory_core import AIMemorySystem, get_settings
 from database_maintenance import DatabaseMaintenance
 
 
@@ -41,7 +41,7 @@ async def test_archive_system():
         original_data_dir = settings.data_dir
         settings.data_dir = Path(test_dir)  # Use Path object, not string
         
-        memory_system = PersistentAIMemorySystem(settings=settings)
+        memory_system = AIMemorySystem(settings=settings)
         print(f"✓ Memory system initialized")
         
         # Verify archive folder exists

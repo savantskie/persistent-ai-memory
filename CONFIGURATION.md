@@ -76,6 +76,106 @@ export BRAVE_API_KEY="your-brave-search-api-key"
 export PERSISTENT_AI_MEMORY_PATH="/path/to/persistent-ai-memory"
 ```
 
+---
+
+## 🔐 Tool Requirements: user_id & model_id
+
+All memory operations **require `user_id` and `model_id` parameters** for data isolation and tracking. This is a security and multi-user safety feature.
+
+### Configuration in memory_config.json
+
+Edit `~/.ai_memory/memory_config.json`:
+
+```json
+{
+  "tool_requirements": {
+    "require_user_id": true,
+    "require_model_id": true,
+    "default_user_id": "default_user",
+    "default_model_id": "default_model"
+  }
+}
+```
+
+**Options:**
+- `require_user_id: true` → Strict mode (every call must provide user_id)
+- `require_user_id: false` → Uses `default_user_id` if not provided
+- Same for `require_model_id` and `default_model_id`
+
+### For AI Assistants: System Prompt Setup
+
+**Add this to your AI's system prompt** to make it automatically provide these parameters:
+
+```
+MEMORY SYSTEM REQUIREMENTS:
+
+When calling memory system tools (store_memory, search_memories, log_tool_call, etc.), 
+ALWAYS include these parameters:
+
+1. user_id: The unique identifier for the current user (string)
+   Examples: 'alice_user_1', 'nate', 'user_bob', 'openwebui_user_abc123'
+   
+2. model_id: The identifier for this AI model (string)
+   Examples: 'gpt-4', 'llama-2:7b', 'claude-3', 'my_custom_model'
+
+If the actual values are unknown, use safe defaults:
+- user_id = 'default_user'
+- model_id = 'default_model'
+
+Rule: ALWAYS include both user_id and model_id in every memory operation.
+This ensures memories are properly isolated and traceable.
+```
+
+### Examples with user_id and model_id
+
+**Python API:**
+```python
+from ai_memory_core import AIMemorySystem
+
+system = AIMemorySystem()
+
+# Store a memory
+await system.store_memory(
+    "User is learning Python async/await",
+    user_id="alice",
+    model_id="gpt-4"
+)
+
+# Search memories
+results = await system.search_memories(
+    "Python programming",
+    user_id="alice",
+    model_id="gpt-4"
+)
+
+# Log tool usage
+await system.log_tool_call(
+    tool_name="search_memories",
+    success=True,
+    user_id="alice",
+    model_id="gpt-4"
+)
+```
+
+**MCP Tools (in your AI interface):**
+```
+Tool: store_memory
+Parameters:
+  - content: "Remember: User prefers async/await patterns"
+  - user_id: "alice"
+  - model_id: "gpt-4"
+  - memory_bank: "Personal"
+```
+
+### Why This Matters
+
+✅ **Security**: Prevents one user's memories from leaking to another
+✅ **Multi-tenant**: Safe to run shared systems with multiple users
+✅ **Auditability**: Know exactly which user and model created each memory
+✅ **Flexibility**: Different models can maintain separate memory spaces for the same user
+
+---
+
 ### LLM Provider Configuration
 
 For memory extraction and smart filtering features:

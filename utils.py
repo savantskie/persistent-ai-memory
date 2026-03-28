@@ -1,9 +1,11 @@
-"""Utility functions for the persistent AI memory system."""
+"""Utility functions for the AI Memory system."""
 
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from typing import Optional, Union
 import logging
+import os
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +16,7 @@ def get_local_timezone() -> ZoneInfo:
         return ZoneInfo(time.tzname[0])
     except:
         # Fallback to a common timezone if detection fails
-        return ZoneInfo("America/Chicago")  # Central Time fallback
+        return ZoneInfo("America/Chicago")  # Minnesota is in Central Time
 
 def parse_timestamp(timestamp: Union[str, int, float, None], fallback: Optional[datetime] = None) -> str:
     """
@@ -58,3 +60,96 @@ def parse_timestamp(timestamp: Union[str, int, float, None], fallback: Optional[
     # If all parsing attempts fail, use fallback
     fallback_time = fallback or datetime.now(get_local_timezone())
     return fallback_time.isoformat()
+
+
+# ==============================================================================
+# Centralized Path Management
+# ==============================================================================
+
+def get_memory_data_dir() -> str:
+    """
+    Get the memory data directory path.
+    
+    Uses AI_MEMORY_DATA_DIR environment variable if set, otherwise returns ./memory_data/
+    relative to the script's location.
+    
+    Returns:
+        Path to memory_data directory
+    """
+    if env_path := os.getenv("AI_MEMORY_DATA_DIR"):
+        return env_path
+    
+    # Default to ./memory_data/ relative to script location
+    script_dir = Path(__file__).parent
+    return str(script_dir / "memory_data")
+
+
+def get_log_dir() -> str:
+    """
+    Get the logs directory path.
+    
+    Uses AI_MEMORY_LOG_DIR environment variable if set, otherwise returns ./logs/
+    relative to the script's location.
+    
+    Returns:
+        Path to logs directory
+    """
+    if env_path := os.getenv("AI_MEMORY_LOG_DIR"):
+        return env_path
+    
+    # Default to ./logs/ relative to script location
+    script_dir = Path(__file__).parent
+    return str(script_dir / "logs")
+
+
+def get_weather_dir() -> str:
+    """
+    Get the weather cache directory path.
+    
+    Uses AI_MEMORY_WEATHER_DIR environment variable if set, otherwise returns ./weather_directory/
+    relative to the script's location.
+    
+    Returns:
+        Path to weather directory
+    """
+    if env_path := os.getenv("AI_MEMORY_WEATHER_DIR"):
+        return env_path
+    
+    # Default to ./weather_directory/ relative to script location
+    script_dir = Path(__file__).parent
+    return str(script_dir / "weather_directory")
+
+
+def get_weather_cache_dir() -> str:
+    """
+    Get the weather cache subdirectory path (weather/ under weather_directory/).
+    
+    Returns:
+        Path to weather cache directory
+    """
+    weather_dir = get_weather_dir()
+    return os.path.join(weather_dir, "weather")
+
+
+def ensure_directories() -> None:
+    """
+    Create all essential directories for the AI Memory system if they don't exist.
+    
+    Creates:
+    - memory_data/
+    - memory_data/archives/
+    - memory_data/backups/
+    - logs/
+    - weather_directory/weather/
+    """
+    directories = [
+        get_memory_data_dir(),
+        os.path.join(get_memory_data_dir(), "archives"),
+        os.path.join(get_memory_data_dir(), "backups"),
+        get_log_dir(),
+        get_weather_cache_dir(),
+    ]
+    
+    for directory in directories:
+        Path(directory).mkdir(parents=True, exist_ok=True)
+        logger.debug(f"Ensured directory exists: {directory}")

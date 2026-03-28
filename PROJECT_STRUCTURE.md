@@ -7,68 +7,90 @@ persistent-ai-memory/
 ├── 📄 .gitignore                   # Git ignore patterns
 ├── 📄 requirements.txt             # Python dependencies
 ├── 📄 setup.py                     # Package setup configuration
-├── 📄 GITHUB_GUIDE.md             # Step-by-step GitHub publishing guide
 ├── 
 ├── 🧠 Core System Files
-├── 📄 ai_memory_core.py            # Main memory system with all database managers
-├── 📄 mcp_server.py                # MCP server with tool call logging
-├── 📄 test_tool_logging.py         # Test script for tool call functionality
+├── 📄 ai_memory_core.py            # Main AIMemorySystem with all database managers
+├── 📄 ai_memory_mcp_server.py      # MCP server for cross-platform integration
+├── 📄 ai_memory_short_term.py      # 🆕 OpenWebUI plugin (primary integration)
+├── 📄 utils.py                     # Utility functions (path management, config)
+├── 📄 port_manager.py              # MCP port detection and management
+├── 📄 tag_manager.py               # Memory tag extraction and normalization
+├── 📄 database_maintenance.py      # Schema maintenance and migration
 ├── 
-└── 📁 memory_data/                 # Created automatically
-    ├── 💾 conversations.db         # Chat messages with auto-threading
-    ├── 💾 ai_memories.db           # Curated memories and insights  
-    ├── 💾 mcp_tool_calls.db        # 🔧 NEW: Tool call logging & reflection
-    ├── 💾 schedule.db              # Appointments and reminders
-    └── 💾 vscode_project.db        # Development sessions & insights
+├── 📁 memory_data/                 # Created automatically
+│   ├── 💾 conversations.db         # Chat messages with auto-threading
+│   ├── 💾 ai_memories.db           # Curated memories and insights  
+│   ├── 💾 mcp_tool_calls.db        # Tool call logging & reflection
+│   ├── 💾 schedule.db              # Appointments and reminders
+│   ├── 💾 vscode_project.db        # Development sessions & insights
+│   ├── 📋 SystemMarkers/           # Memory bank registry
+│   ├── 📋 archives/                # Archived memories
+│   └── 📋 backups/                 # Automated backups
+│
+└── 📁 logs/                        # Created automatically
+    └── Various log files           # Operation and embedding completion logs
 
 🎯 Key Features Implemented:
 ========================== 
 
-✅ Multi-Database Architecture
-   - 5 specialized SQLite databases
-   - Foreign key constraints
-   - Auto-creation of sessions/conversations
+🎯 Key Features Implemented:
+========================== 
 
-✅ Real-Time Conversation Capture  
-   - VS Code chat session monitoring
-   - LM Studio conversation import
-   - Cross-platform file path detection
-   - Hash-based duplicate prevention
+✅ OpenWebUI Plugin Integration (Primary)
+   - Deploy directly as Function in OpenWebUI
+   - Intelligent memory extraction from conversations
+   - Advanced memory filtering and relevance scoring
+   - Smart injection only when relevant
+   - Configurable via OpenWebUI settings
+   - LLM-powered memory analysis and normalization
+
+✅ Multi-Database Architecture
+   - 5 specialized SQLite databases with auto-creation
+   - Foreign key constraints and data integrity
+   - Automatic table creation on first run
+   - Path-independent (environment variable driven)
+
+✅ Semantic Search & Embeddings
+   - Vector-based similarity search
+   - Embedding model flexibility (Ollama, LM Studio, OpenAI)
+   - Automatic model switching with embedding regeneration
+   - Caching and performance optimization
+
+✅ Intelligent Memory Management
+   - Semantic deduplication (not just text matching)
+   - Automatic memory normalization and standardization
+   - Importance scoring with LLM analysis
+   - Memory pruning and archival strategies
+   - Tag extraction and memory bank organization
 
 ✅ MCP Server Integration
-   - Standardized tool interface
-   - Async tool execution
+   - Standardized Model Context Protocol
+   - Streamable and mcpo-compatible
+   - Async tool execution with concurrency limits
    - JSON schema validation
-   - Clean error handling
+   - Tool call logging and reflection
 
-✅ 🔧 NEW: Tool Call Logging & Reflection
-   - Every MCP tool call logged with timing
-   - Daily usage statistics tracking
-   - Self-reflection capabilities for AI assistants
-   - Usage pattern analysis and recommendations
-
-✅ Semantic Search (Framework)
-   - LM Studio embedding service integration
-   - Vector similarity search structure
-   - Embedding storage in databases
-
-✅ Health Monitoring
-   - Comprehensive system diagnostics
-   - Database statistics
-   - Component status tracking
+✅ Complete Path Independence
+   - Environment variable overrides (AI_MEMORY_DATA_DIR, AI_MEMORY_LOG_DIR)
+   - No hardcoded paths anywhere in system
+   - Works on any machine in any directory
+   - Portable for deployment and distribution
 
 ✅ Cross-Platform Support
    - Windows, Linux, macOS compatibility
    - Automatic conversation path detection
    - Platform-specific configurations
+   - Docker-deployable
 
-🚀 Ready for GitHub Publication!
-==============================
+🚀 Ready for Community Distribution!
+====================================
 
 The system is now:
-- ✅ Fully modularized and reusable
-- ✅ Well-documented with comprehensive README
-- ✅ Tool call logging implemented and tested
+- ✅ Fully generalized and Friday-branding free
+- ✅ Optimized for OpenWebUI as primary platform
+- ✅ Production-ready with comprehensive error handling
+- ✅ Portable across any machine and directory structure
+- ✅ Well-tested with validation and health checks
 - ✅ MIT licensed for open source sharing
 - ✅ Package-ready with setup.py
 - ✅ GitHub-ready with proper .gitignore

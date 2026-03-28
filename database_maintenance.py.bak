@@ -15,7 +15,6 @@ import os
 import json
 
 from tag_manager import TagManager
-from utils import get_memory_data_dir
 
 logger = logging.getLogger(__name__)
 
@@ -41,12 +40,6 @@ class DatabaseMaintenance:
         else:
             # Try to infer from memory_system if not provided
             self.memory_data_path = Path(memory_system.conversations_db.db_path).parent
-        
-        # Ensure archive and backup directories exist
-        archives_dir = self.memory_data_path / "archives"
-        backups_dir = self.memory_data_path / "backups"
-        archives_dir.mkdir(parents=True, exist_ok=True)
-        backups_dir.mkdir(parents=True, exist_ok=True)
         
         self.db_registry: Dict[str, List[Dict]] = {}  # {db_type: [{"path": str, "date_range": tuple, "size": int}, ...]}
         self.rotation_threshold_bytes = 3 * 1024 * 1024 * 1024  # 3GB
@@ -336,7 +329,7 @@ class DatabaseMaintenance:
         """
         try:
             # Import database classes to get their table definitions
-            from ai_memory_core import (
+            from friday_memory_system import (
                 ConversationDatabase, AIMemoryDatabase, ScheduleDatabase,
                 MCPToolCallDatabase, VSCodeProjectDatabase
             )
@@ -369,7 +362,7 @@ class DatabaseMaintenance:
         """
         Check if a database needs rotation, and if so, create the new one.
         
-        This is the main orchestration method called by AIMemorySystem.
+        This is the main orchestration method called by FridayMemorySystem.
         
         Args:
             db_type: Type of database (e.g., "conversations", "mcp_tool_calls")
@@ -2306,10 +2299,9 @@ class DatabaseMaintenance:
         Returns:
             Dict with registry building results
         """
-        tag_registry_path = os.path.join(get_memory_data_dir(), "tag_registry.json")
         results = {
-            "main_registry_path": str(tag_registry_path),
-            "docker_registry_path": str(tag_registry_path),  # Same location for consistency
+            "main_registry_path": str(Path("/media/nate/Friday/Friday/tag_registry.json")),
+            "docker_registry_path": str(Path("/media/nate/Friday/OpenWebUI/data/tag_registry.json")),
             "tags_found": 0,
             "memories_scanned": 0,
             "errors": []
@@ -2340,9 +2332,9 @@ class DatabaseMaintenance:
                 registry = tag_manager.build_tag_registry(memories_to_process)
                 results["tags_found"] = len(registry)
                 
-                # Save to both locations (now the same for consistency)
-                main_path = Path(tag_registry_path)
-                docker_path = Path(tag_registry_path)
+                # Save to both locations
+                main_path = Path("/media/nate/Friday/Friday/tag_registry.json")
+                docker_path = Path("/media/nate/Friday/OpenWebUI/data/tag_registry.json")
                 
                 # Save main location
                 if tag_manager.save_registry(registry, str(main_path)):
@@ -2378,10 +2370,9 @@ class DatabaseMaintenance:
         Returns:
             Dict with memory_bank registry building results
         """
-        memory_bank_registry_path = os.path.join(get_memory_data_dir(), "memory_bank_registry.json")
         results = {
-            "main_registry_path": str(memory_bank_registry_path),
-            "docker_registry_path": str(memory_bank_registry_path),  # Same location for consistency
+            "main_registry_path": str(Path("/media/nate/Friday/Friday/memory_bank_registry.json")),
+            "docker_registry_path": str(Path("/media/nate/Friday/OpenWebUI/data/memory_bank_registry.json")),
             "banks_found": 0,
             "total_memories": 0,
             "errors": []
@@ -2420,9 +2411,9 @@ class DatabaseMaintenance:
                 results["errors"].append(f"Database scan error: {str(e)}")
                 return results
             
-            # Save to both locations (now the same for consistency)
-            main_path = Path(memory_bank_registry_path)
-            docker_path = Path(memory_bank_registry_path)
+            # Save to both locations
+            main_path = Path("/media/nate/Friday/Friday/memory_bank_registry.json")
+            docker_path = Path("/media/nate/Friday/OpenWebUI/data/memory_bank_registry.json")
             
             try:
                 # Save main location

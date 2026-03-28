@@ -9,7 +9,40 @@ This guide covers production deployments, advanced configuration, scaling, monit
 
 ---
 
-## 🚀 Production Setup
+## � Deployment Architecture
+
+The AI Memory System supports two primary deployment models:
+
+### 1. OpenWebUI Plugin (Recommended)
+**Best for:** Direct chat integration with sophisticated memory management
+- Deploy as Function in OpenWebUI: **Settings → Functions → +New Function**
+- Copy entire `ai_memory_short_term.py` file
+- Set trigger to `Inlet` (runs before model generates response)
+- Configurable memory behavior via function settings
+- No separate server required - runs in same process as OpenWebUI
+
+**Advantages:**
+- Tight integration with chat flow
+- Instant memory injection before response
+- No network latency
+- Configurable per-conversation
+
+### 2. MCP Server (Alternative Platforms)
+**Best for:** Integrating with Claude, LM Studio, custom AI clients
+- Run: `python -m ai_memory_mcp_server`
+- Connect via mcpo or make streamable
+- Provides 36+ tools for memory and system operations
+- Can be deployed separately or containerized
+
+**Advantages:**
+- Cross-platform compatibility
+- Standard Model Context Protocol
+- Independent scaling
+- Reusable across multiple AI clients
+
+---
+
+## �🚀 Production Setup
 
 ### System Requirements
 
