@@ -150,7 +150,7 @@ import os
 import pickle
 import aiohttp
 import numpy as np
-from friday_memory_normalization_migration import MemoryNormalizationMigration
+from ai_memory_normalization_migration import MemoryNormalizationMigration
 from utils import get_log_dir, get_memory_data_dir, ensure_directories
 
 # Embedding model imports
@@ -2244,20 +2244,9 @@ Analyze the following conversation and provide a concise summary.""",
             logger.error(f"Failed to load bank registry: {e}")
             self._discovered_memory_banks = {"general", "personal", "work"}
 
-        # --- TASK 1: Check if migration needs to run ---
-        # (Will be scheduled as async background task on first inlet call)
-        try:
-            self._migration_instance = MemoryNormalizationMigration(
-                migration_marker_path=os.path.join(get_memory_data_dir(), ".migration_completed")
-            )
-            self._migration_needs_run = not self._migration_instance.has_completed()
-            if self._migration_needs_run:
-                logger.info("Migration needed on startup - will run on first inlet call")
-            else:
-                logger.debug("Memory normalization migration already completed")
-        except Exception as e:
-            logger.error(f"Failed to initialize migration checker: {e}")
-            self._migration_needs_run = False
+        # --- TASK 1: Track per-user-model migrations ---
+        # Migration runs once per user/model pair on first inlet call
+        self._completed_migrations = set()  # Set of (user_id, model_id) tuples that have been migrated
 
         # Memory operation queue system
         self._memory_task_queue = asyncio.Queue()
@@ -4931,45 +4920,6 @@ Produce ONLY the corrected JSON output following the format specified in the sys
         user_id = __user__["id"]
         user_name = __user__.get("name", "Unknown")
         
-        # --- TASK 1: Trigger migration on first inlet call if needed ---
-        if self._migration_needs_run:
-            try:
-                logger.info("Migration needed - scheduling normalization async task...")
-                
-                # ISSUE 2 FIX: Create async wrapper for updating memories via Memories class
-                async def update_memory_wrapper(memory_id: str, content: str, user_id: str = None):
-                    """Wrapper to update memory using the Memories model class"""
-                    try:
-                        result = Memories.update_memory_by_id_and_user_id(
-                            id=memory_id,
-                            user_id=user_id or "all",  # Use provided user_id or fall back to "all"
-                            content=content,
-                            db=None  # Will create its own session via get_db_context
-                        )
-                        if result:
-                            logger.debug(f"Memory {memory_id} updated successfully")
-                            return True
-                        else:
-                            logger.warning(f"Failed to update memory {memory_id}: returned None")
-                            return False
-                    except Exception as e:
-                        logger.error(f"Error updating memory {memory_id}: {e}")
-                        return False
-                
-                # Schedule migration as background task (non-blocking)
-                # ISSUE 3 FIX: mark_completed() is called from inside the migration, not here
-                asyncio.create_task(
-                    self._migration_instance.run_migration(
-                        query_memory_func=query_memory,
-                        update_memory_func=update_memory_wrapper
-                    )
-                )
-                self._migration_needs_run = False
-                logger.info("✓ Memory normalization migration scheduled")
-            except Exception as e:
-                logger.error(f"Error scheduling memory migration: {e}\n{traceback.format_exc()}")
-                self._migration_needs_run = False  # Don't retry to avoid spam
-        
         # Store UUID for access by outlet and other methods
         self._current_user_uuid = user_id
         self._current_user_name = user_name
@@ -4994,6 +4944,66 @@ Produce ONLY the corrected JSON output following the format specified in the sys
         # Store for use throughout the session
         self._current_model_card_name = model_card_name
         model_id = model_card_name  # Use model card name as primary model ID
+        
+        # --- TASK 1: Trigger per-user-model migration on first inlet call if needed ---
+        migration_key = (user_id, model_id)
+        if migration_key not in self._completed_migrations:
+            try:
+                logger.info(f"Checking migration for user={user_id} model={model_id}...")
+                migration_instance = MemoryNormalizationMigration(
+                    user_id=user_id,
+                    model_id=model_id,
+                )
+                
+                if not migration_instance.has_completed():
+                    logger.info(f"Migration needed for user={user_id} model={model_id} - scheduling async task...")
+                    
+                    # Create async wrapper for querying memories for this user/model pair
+                    async def query_memory_wrapper(uid: str, mid: str):
+                        """Query all memories for the given user/model pair"""
+                        try:
+                            # Get all memories - the migration will only normalize those that need it
+                            all_memories = Memories.get_memories()
+                            return all_memories or []
+                        except Exception as e:
+                            logger.error(f"Error querying memories for user={uid} model={mid}: {e}")
+                            return []
+                    
+                    # Create async wrapper for updating memories with strict user/model isolation
+                    async def update_memory_wrapper(uid: str, mid: str, memory_id: str, content: str):
+                        """Update a memory with user_id enforcement for strict isolation"""
+                        try:
+                            result = Memories.update_memory_by_id_and_user_id(
+                                id=memory_id,
+                                user_id=uid,  # Strict: use provided user_id
+                                content=content,
+                                db=None  # Will create its own session via get_db_context
+                            )
+                            if result:
+                                logger.debug(f"Memory {memory_id} updated successfully for user={uid}")
+                                return True
+                            else:
+                                logger.warning(f"Failed to update memory {memory_id}: returned None")
+                                return False
+                        except Exception as e:
+                            logger.error(f"Error updating memory {memory_id} for user={uid}: {e}")
+                            return False
+                    
+                    # Schedule migration as background task (non-blocking)
+                    asyncio.create_task(
+                        migration_instance.run_migration(
+                            query_memory_func=query_memory_wrapper,
+                            update_memory_func=update_memory_wrapper
+                        )
+                    )
+                    logger.info(f"✓ Memory normalization migration scheduled for user={user_id} model={model_id}")
+                else:
+                    logger.debug(f"Migration already completed for user={user_id} model={model_id}")
+                
+                # Mark this user/model pair as having been checked
+                self._completed_migrations.add(migration_key)
+            except Exception as e:
+                logger.error(f"Error scheduling migration for user={user_id} model={model_id}: {e}\n{traceback.format_exc()}")
         
         # Create composite conversation_id: chat_id_user_id_model_id
         # Falls back to old pattern if chat_id is missing
