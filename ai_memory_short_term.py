@@ -4117,6 +4117,7 @@ Produce ONLY the corrected JSON output following the format specified in the sys
                             )
 
                             # Store each old memory in Friday Memory System
+                            successfully_promoted_ids = set()
                             for mem in old_memories:
                                 try:
                                     # Create memory content with metadata
@@ -4213,6 +4214,7 @@ Produce ONLY the corrected JSON output following the format specified in the sys
                                             # Check if creation succeeded
                                             if result.get("status") == "success":
                                                 embedding_status = result.get("embedding_status", "unknown")
+                                                successfully_promoted_ids.add(mem.get("id"))
                                                 logger.info(
                                                     f"✅ Successfully promoted memory {mem.get('id')} to Friday. "
                                                     f"Memory ID: {result.get('memory_id')}, Embedding: {embedding_status}"
@@ -4247,9 +4249,17 @@ Produce ONLY the corrected JSON output following the format specified in the sys
                                     continue
 
                             # Optionally clean up promoted memories from OpenWebUI
+                            # Only delete memories that were individually verified as successfully promoted
                             if self.valves.clean_promoted_memories:
                                 deleted_count = 0
+                                skipped_count = 0
                                 for mem in old_memories:
+                                    if mem.get("id") not in successfully_promoted_ids:
+                                        skipped_count += 1
+                                        logger.warning(
+                                            f"⚠️ SKIPPED DELETION: Memory {mem.get('id')} promotion not verified. Keeping in OpenWebUI for safety."
+                                        )
+                                        continue
                                     try:
                                         delete_op = MemoryOperation(
                                             operation="DELETE", id=mem["id"]
@@ -4266,6 +4276,10 @@ Produce ONLY the corrected JSON output following the format specified in the sys
                                 if deleted_count > 0:
                                     logger.info(
                                         f"Cleaned up {deleted_count} promoted memories from OpenWebUI for user {user_id}"
+                                    )
+                                if skipped_count > 0:
+                                    logger.warning(
+                                        f"⚠️ Retained {skipped_count} memories in OpenWebUI due to unverified promotion"
                                     )
 
                         except Exception as user_error:
@@ -7322,8 +7336,8 @@ Rate the relevance of EACH memory to the current user message."""
                                     )
                             
                             # Step 3: DELETE from OpenWebUI only if promotion was verified
-                            # OR if Friday system is not available (fallback to normal pruning)
-                            should_delete = promotion_verified or not FRIDAY_MEMORY_SYSTEM_AVAILABLE
+                            # FMS lives on the same system - if it's unavailable, do NOT delete as a fallback
+                            should_delete = promotion_verified
                             
                             if should_delete:
                                 delete_op = MemoryOperation(
