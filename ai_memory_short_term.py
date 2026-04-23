@@ -1050,6 +1050,19 @@ What details are relevant to remember about this image? Describe only the key vi
             default=7200,  # 2 hours performance setting
             description="How often (in seconds) to check for available models. Default 7200 = every 2 hours",
         )
+
+        enable_core_identity_task: bool = Field(
+            default=True,
+            description="Turn on/off the background task that periodically distills core identity from memories and conversations",
+        )
+        core_identity_max_memories: int = Field(
+            default=500,
+            description="Maximum number of memories to analyze per core identity generation cycle",
+        )
+        core_identity_interval: int = Field(
+            default=43200,  # 12 hours (runs during quiet hours: midnight-6am)
+            description="How often (in seconds) to run core identity generation. Default 43200 = every 12 hours",
+        )
         # ------ End Background Task Management Configuration ------
 
         # ------ Begin Summarization Configuration ------
@@ -2298,6 +2311,17 @@ Analyze the following conversation and provide a concise summary.""",
         self._retroactive_embedding_task.add_done_callback(
             self._background_tasks.discard
         )
+
+        # Schedule core identity generation task
+        if self.valves.enable_core_identity_task:
+            self._core_identity_task = asyncio.create_task(
+                self._core_identity_generation_loop()
+            )
+            self._background_tasks.add(self._core_identity_task)
+            self._core_identity_task.add_done_callback(
+                self._background_tasks.discard
+            )
+            logger.debug("Started core identity generation background task")
 
         # Log configuration for deduplication, helpful for testing and validation
         logger.debug(f"Memory deduplication settings:")
@@ -5446,7 +5470,11 @@ Produce ONLY the corrected JSON output following the format specified in the sys
                 self._inject_summary_into_context(body, cached["summary"])
                 logger.debug(f"Re-injected cached summary for {cache_key}")
 
-
+        # --- Core Identity Injection (before memory injection) --- #
+        try:
+            await self._inject_core_identity_into_context(body, user_id, model_id)
+        except Exception as e:
+            logger.debug(f"Core identity injection skipped: {e}")
 
         # --- Memory Injection --- #
         if (
@@ -6485,6 +6513,143 @@ Produce ONLY the corrected JSON output following the format specified in the sys
                 logger.info("Retroactive importance scoring task cancelled.")
             except Exception as e:
                 logger.error(f"Fatal error in retroactive importance scoring: {e}\n{traceback.format_exc()}")
+
+    async def _core_identity_generation_loop(self):
+        """Periodically generate/update the AI companion's core identity.
+        
+        Runs during quiet hours (midnight-6am UTC) with 10 min inlet inactivity gate.
+        Uses CoreIdentityManager to distill memories and conversations into structured
+        personality, relationships, principles, and facts.
+        """
+        consecutive_errors = 0
+        max_consecutive_errors = 5
+        
+        try:
+            while True:
+                # Sleep for configured interval with jitter
+                jitter = random.uniform(0.9, 1.1)  # +/-10% randomization
+                interval = self.valves.core_identity_interval * jitter
+                await asyncio.sleep(interval)
+                
+                logger.info("Starting periodic core identity generation run...")
+                
+                try:
+                    # Wait for quiet hours and inlet inactivity
+                    while not self._is_ok_to_run_background_task():
+                        await asyncio.sleep(300)  # Check every 5 minutes
+                    
+                    # Import CoreIdentityManager
+                    from core_identity import CoreIdentityManager
+                    
+                    memory_data_dir = os.getenv("AI_MEMORY_DATA_DIR", "./memory_data")
+                    manager = CoreIdentityManager(memory_data_dir=memory_data_dir)
+                    manager.initialize()
+                    
+                    # Determine user_id and model_id - try from context, fall back to defaults
+                    # For PAM, process most recent user/model pair seen or use defaults
+                    user_id = getattr(self, "_current_user_id", None) or "default_user"
+                    model_id = getattr(self, "_current_model_id", None) or "default_model"
+                    
+                    logger.info(f"Core identity generation: user={user_id}, model={model_id}")
+                    
+                    # Run generation
+                    result = await manager.run_generation(
+                        user_id=user_id,
+                        model_id=model_id,
+                        llm_model=self.valves.llm_model_name,
+                        llm_api_endpoint=self.valves.llm_api_endpoint_url,
+                        llm_provider=self.valves.llm_provider_type,
+                        llm_api_key=self.valves.llm_api_key,
+                        max_memories=self.valves.core_identity_max_memories
+                    )
+                    
+                    if result["status"] == "completed":
+                        version = result.get("version", 0)
+                        memories = result.get("memories_processed", 0)
+                        convos = result.get("conversations_processed", 0)
+                        
+                        log_entry = (
+                            f"[{datetime.now(timezone.utc).isoformat()}] "
+                            f"CORE_IDENTITY: Generation completed - user_id={user_id}, "
+                            f"model_id={model_id}, version={version}, "
+                            f"memories_analyzed={memories}, "
+                            f"conversations_analyzed={convos}"
+                        )
+                        
+                        # Log to memory system log
+                        log_dir = get_log_dir()
+                        os.makedirs(log_dir, exist_ok=True)
+                        log_file = os.path.join(log_dir, "short_term_memory.log")
+                        try:
+                            with open(log_file, "a") as f:
+                                f.write(log_entry + "\n")
+                        except Exception as e:
+                            logger.error(f"Failed to write core identity log: {e}")
+                        
+                        logger.info(log_entry)
+                        consecutive_errors = 0
+                    else:
+                        consecutive_errors += 1
+                        logger.warning(f"Core identity generation failed: {result.get('error', 'unknown')}")
+                        
+                        if consecutive_errors >= max_consecutive_errors:
+                            logger.critical(f"Core identity generation disabled after {max_consecutive_errors} consecutive failures")
+                            break
+                        
+                        backoff = min(2 ** consecutive_errors, 32)
+                        await asyncio.sleep(backoff)
+                
+                except Exception as e:
+                    consecutive_errors += 1
+                    logger.error(f"Error in core identity generation task: {e}\n{traceback.format_exc()}")
+                    
+                    if consecutive_errors >= max_consecutive_errors:
+                        logger.critical(f"Core identity generation task disabled after {max_consecutive_errors} consecutive failures")
+                        break
+                    
+                    backoff = min(2 ** consecutive_errors, 32)
+                    await asyncio.sleep(backoff)
+        
+        except asyncio.CancelledError:
+            logger.debug("Core identity generation task cancelled")
+        except Exception as e:
+            logger.error(f"Fatal error in core identity generation task: {e}\n{traceback.format_exc()}")
+
+    async def _inject_core_identity_into_context(
+        self, body: Dict[str, Any], user_id: str, model_id: str
+    ) -> None:
+        """Inject core identity into the system prompt (before memory injection).
+        
+        Appends core identity to the end of the main system message.
+        Only fires once per conversation session.
+        """
+        if getattr(self, "_core_identity_injected", False):
+            return
+        
+        try:
+            from core_identity import CoreIdentityManager
+            memory_data_dir = os.getenv("AI_MEMORY_DATA_DIR", "./memory_data")
+            manager = CoreIdentityManager(memory_data_dir=memory_data_dir)
+            identity_text = manager.get_core_identity_for_injection(user_id, model_id)
+            
+            if identity_text:
+                if "messages" in body:
+                    for message in body["messages"]:
+                        if message.get("role") == "system":
+                            message["content"] += identity_text
+                            logger.debug(f"Injected core identity into system prompt")
+                            break
+                    else:
+                        # No system message found — create one
+                        body["messages"].insert(0, {
+                            "role": "system",
+                            "content": identity_text
+                        })
+                        logger.debug(f"Created new system message with core identity")
+                
+                self._core_identity_injected = True
+        except Exception as e:
+            logger.debug(f"Could not inject core identity: {e}")
 
     async def _get_formatted_memories(self, user_id: str) -> List[Dict[str, Any]]:
         """Get all memories for a user and format them for processing"""

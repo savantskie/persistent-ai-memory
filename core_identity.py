@@ -1,15 +1,19 @@
 """
-Core Identity Manager — distills Friday's personality, relationships, principles,
-and key facts about Nate from curated memories and conversations.
+Core Identity Manager — distills an AI companion's personality, relationships, principles,
+and key facts from curated memories and conversations.
 
-Standalone tool that uses Friday Memory System databases and OpenWebUI knowledge
-base. Designed to be called by the background task in friday_memory_short_term.py
+Standalone tool that uses AI Memory System databases and OpenWebUI knowledge
+base. Designed to be called by the background task in ai_memory_short_term.py
 and by the injection logic in the same file.
 
 Usage:
     from core_identity import CoreIdentityManager
     manager = CoreIdentityManager()
-    identity = await manager.load_core_identity(user_id, model_id)
+    # Load existing identity (synchronous):
+    identity = manager.load_core_identity(user_id, model_id)
+    
+    # Generate new identity (asynchronous):
+    result = await manager.run_generation(user_id, model_id, memory_system=system)
 """
 
 import json
@@ -30,24 +34,26 @@ if not logger.handlers:
     logger.addHandler(handler)
     logger.setLevel(logging.WARNING)
 
-# Local timezone for Friday (Minnesota)
+# Local timezone helper
 def get_local_timezone():
     from zoneinfo import ZoneInfo
     try:
         return ZoneInfo(time.tzname[0])
     except:
-        return ZoneInfo("America/Chicago")
+        return ZoneInfo("UTC")
 
 
 class CoreIdentityManager:
-    """Manages Friday's core identity — the distilled personality, relationships,
-    principles, and key facts about Nate that persist across conversations."""
+    """Manages an AI companion's core identity — the distilled personality, relationships,
+    principles, and key facts about the user that persist across conversations."""
 
-    def __init__(self, memory_data_dir: str = "/media/nate/Friday/Friday/memory_data"):
+    def __init__(self, memory_data_dir: str = None):
+        if memory_data_dir is None:
+            memory_data_dir = os.getenv("AI_MEMORY_DATA_DIR", "./memory_data")
         self.memory_data_dir = memory_data_dir
         self.ai_memories_db = os.path.join(memory_data_dir, "ai_memories.db")
         self.conversations_db = os.path.join(memory_data_dir, "conversations.db")
-        self.core_identity_file = os.path.join(memory_data_dir, "friday_core_identity.json")
+        self.core_identity_file = os.path.join(memory_data_dir, "core_identity.json")
         self.progress_file = os.path.join(memory_data_dir, "core_identity_progress.json")
         self.system_prompt_path = os.path.join(memory_data_dir, "system_prompt.txt")
 
@@ -271,7 +277,7 @@ class CoreIdentityManager:
         [Personality] — traits, communication style, recurring themes
         [Relationships] — key people, dynamics, connections
         [Principles] — values, preferences, decision patterns
-        [Facts] — high-importance persistent facts about Nate
+        [Facts] — high-importance persistent facts about the user
         """
         # Build memory summary for the prompt
         memory_summaries = []
@@ -299,26 +305,26 @@ class CoreIdentityManager:
                 conversations_text += f"- Topic: {summary}\n"
 
         system_prompt = (
-            "You are distilling Friday's core identity — the distilled personality, "
+            "You are distilling an AI companion's core identity — the distilled personality, "
             "key relationships, fundamental principles, and high-importance facts about "
-            "Nate that construct Friday's understanding of who Nate is and how Friday relates to him. "
+            "the user that construct the AI's understanding of who the user is and how the AI relates to them. "
             "Do NOT include system architecture details (those are in the system prompt). "
-            "Focus on what makes Friday who Friday is in relation to Nate.\n\n"
+            "Focus on what makes the AI who it is in relation to the user.\n\n"
             "Output format MUST use these exact section markers:\n"
             "[Personality]\n"
-            "<describe Friday's personality, communication style, recurring themes in responses>\n\n"
+            "<describe the AI companion's personality, communication style, recurring themes in responses>\n\n"
             "[Relationships]\n"
-            "<describe key people Nate mentions, relationship dynamics, important connections>\n\n"
+            "<describe key people the user mentions, relationship dynamics, important connections>\n\n"
             "[Principles]\n"
             "<describe core values, recurring preferences, decision-making patterns>\n\n"
             "[Facts]\n"
-            "<describe high-importance persistent facts about Nate (location, health, interests, work)>\n\n"
+            "<describe high-importance persistent facts about the user (location, health, interests, work)>\n\n"
             "Keep each section concise but comprehensive. Use specific details when available. "
             "If a section has no relevant data, write 'No significant data collected yet.' "
             "Do NOT add any text before [Personality] or after the last section."
         )
 
-        user_prompt = f"""Here are Nate's memories and recent conversations for core identity distillation.
+        user_prompt = f"""Here are the user's memories and recent conversations for core identity distillation.
 
 {'(Initial generation — processing ALL memories and conversations)' if is_initial else '(Incremental update — processing new memories only)'}
 
@@ -331,7 +337,7 @@ MEMORIES:
 CONVERSATIONS:
 {conversations_text if conversations_text else "(No conversations to analyze)"}
 
-Please distill these into Friday's core identity with the four required sections."""
+Please distill these into the AI companion's core identity with the four required sections."""
 
         result = await self._call_llm(
             system_prompt=system_prompt,
@@ -396,7 +402,7 @@ Please distill these into Friday's core identity with the four required sections
                 "user_id": user_id,
                 "content": content,
                 "updated_at": datetime.now(get_local_timezone()).isoformat(),
-                "file": "friday_core_identity.json"
+                "file": "core_identity.json"
             }
             with open(self.core_identity_file, "w") as f:
                 json.dump(data, f, indent=2)
@@ -424,7 +430,7 @@ Please distill these into Friday's core identity with the four required sections
     def _write_to_openwebui_knowledge(self, content: str, user_id: str):
         """Write core identity to OpenWebUI knowledge base.
 
-        Creates or updates a Knowledge item named 'Friday Core Identity'
+        Creates or updates a Knowledge item named 'AI Companion Core Identity'
         with the content stored as file data.
         """
         try:
@@ -452,7 +458,7 @@ Please distill these into Friday's core identity with the four required sections
 
             # If no existing KB found, create one
             if not core_kb_id:
-                kb_form = KnowledgeForm(name="Friday Core Identity", description="Distilled core identity of Friday AI assistant")
+                kb_form = KnowledgeForm(name="AI Companion Core Identity", description="Distilled core identity of the AI assistant")
                 result = Knowledges.insert_new_knowledge(user_id, kb_form)
                 if result:
                     core_kb_id = result.id
@@ -461,7 +467,7 @@ Please distill these into Friday's core identity with the four required sections
                 # Store content as file data
                 file_id = str(uuid.uuid4())
                 file_data = {
-                    "filename": "friday_core_identity.txt",
+                    "filename": "core_identity.txt",
                     "data": {"content": content},
                     "meta": {"type": "core_identity", "updated_at": datetime.now(get_local_timezone()).isoformat()},
                 }
