@@ -1,7 +1,7 @@
 """
 title: AI Short Term Memory v0.0.4 - Short term memory plugin for OpenWebUI
 author: Nate
-version: 0.0.21
+version: 0.0.22
 ---
 
 # Overview
@@ -3849,7 +3849,7 @@ Produce ONLY the corrected JSON output following the format specified in the sys
                     # Fetch all users (or handle single user case)
                     # For now, assuming single user for simplicity, adapt if multi-user support needed
                     user_id = "default"  # Replace with actual user ID logic if needed
-                    user_obj = Users.get_user_by_id(user_id)
+                    user_obj = await Users.get_user_by_id(user_id)
                     if not user_obj:
                         logger.warning(
                             f"Summarization skipped: User '{user_id}' not found."
@@ -4063,7 +4063,7 @@ Produce ONLY the corrected JSON output following the format specified in the sys
                     # Get all users from OpenWebUI
 
                     # Get all users (assuming we can iterate through all users)
-                    all_users = Users.get_all_users()
+                    all_users = await Users.get_all_users()
                     if not all_users:
                         logger.warning("No users found for memory promotion.")
                         continue
@@ -5004,12 +5004,14 @@ Produce ONLY the corrected JSON output following the format specified in the sys
                             return False
                     
                     # Schedule migration as background task (non-blocking)
-                    asyncio.create_task(
+                    migration_task = asyncio.create_task(
                         migration_instance.run_migration(
                             query_memory_func=query_memory_wrapper,
                             update_memory_func=update_memory_wrapper
                         )
                     )
+                    self._background_tasks.add(migration_task)
+                    migration_task.add_done_callback(self._background_tasks.discard)
                     logger.info(f"✓ Memory normalization migration scheduled for user={user_id} model={model_id}")
                 else:
                     logger.debug(f"Migration already completed for user={user_id} model={model_id}")
@@ -6596,19 +6598,35 @@ Produce ONLY the corrected JSON output following the format specified in the sys
         # Log injected memories for debugging
         logger.debug(f"Injected memories:\n{memory_context[:500]}...")
 
-        # Add to system message or create a new one if none exists
-        if "messages" in body:
-            system_message_exists = False
-            for message in body["messages"]:
-                if message["role"] == "system":
-                    message["content"] += f"\n\n{memory_context}"
-                    system_message_exists = True
+        # Append memories to the last user message, then add an assistant
+        # acknowledgment message to preserve KV cache. The user+assistant pair
+        # approach prevents the same KV cache shift on every generation cycle.
+        if "messages" in body and memory_context:
+            last_user_idx = -1
+            for i in range(len(body["messages"]) - 1, -1, -1):
+                if body["messages"][i].get("role") == "user":
+                    last_user_idx = i
                     break
-
-            if not system_message_exists:
-                body["messages"].insert(
-                    0, {"role": "system", "content": memory_context}
+            
+            if last_user_idx >= 0:
+                body["messages"][last_user_idx]["content"] = (
+                    body["messages"][last_user_idx]["content"]
+                    + "\n\n---\n\n[Injected Memories]\n"
+                    + memory_context
                 )
+                body["messages"].append({
+                    "role": "assistant",
+                    "content": "I've noted those details. Using them now to better respond to your message."
+                })
+            else:
+                body["messages"].append({
+                    "role": "user",
+                    "content": memory_context
+                })
+                body["messages"].append({
+                    "role": "assistant",
+                    "content": "I've noted those details. Using them now to better respond to your message."
+                })
 
     async def _format_memories_for_context(
         self, memories: List[Dict[str, Any]], format_type: str
@@ -6835,7 +6853,7 @@ Produce ONLY the corrected JSON output following the format specified in the sys
         # Get user valves
         user_valves = None
         try:
-            user = Users.get_user_by_id(user_id)
+            user = await Users.get_user_by_id(user_id)
             user_valves = self._get_user_valves(user)
 
             # Debug logging for user valves
@@ -8933,7 +8951,7 @@ Current datetime: {current_datetime.strftime('%A, %B %d, %Y %H:%M:%S')} ({curren
         """Process memory operations"""
         successfully_saved_ops = []
         try:
-            user = Users.get_user_by_id(user_id)
+            user = await Users.get_user_by_id(user_id)
             if not user:
                 logger.error(f"User not found: {user_id}")
                 return []
@@ -9212,7 +9230,7 @@ Current datetime: {current_datetime.strftime('%A, %B %d, %Y %H:%M:%S')} ({curren
                 return  # Not enough memories to have duplicates
             
             # Get the user object for delete operations
-            user = Users.get_user_by_id(user_id)
+            user = await Users.get_user_by_id(user_id)
             if not user:
                 logger.warning(f"User not found for cleanup: {user_id}")
                 return

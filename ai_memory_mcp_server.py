@@ -311,6 +311,8 @@ class AIMemoryMCPServer:
             # Start file monitoring for auto-reload
             try:
                 self._reload_task = asyncio.create_task(self._check_and_reload_modules())
+                self._background_tasks.add(self._reload_task)
+                self._reload_task.add_done_callback(self._background_tasks.discard)
                 logger.info("✅ Module file monitoring started (watches for changes to memory system files).")
             except Exception as e:
                 logger.error(f"❌ Error starting module file monitoring: {e}")
@@ -335,8 +337,12 @@ class AIMemoryMCPServer:
                         except Exception as e:
                             logger.error(f"❌ Error importing OpenWebUI chat: {e}")
                         await asyncio.sleep(3 * 60 * 60)  # 3 hours
-                asyncio.create_task(openwebui_import_loop())
-        asyncio.create_task(delayed_start())    
+                openwebui_task = asyncio.create_task(openwebui_import_loop())
+                self._background_tasks.add(openwebui_task)
+                openwebui_task.add_done_callback(self._background_tasks.discard)
+        startup_task = asyncio.create_task(delayed_start())
+        self._background_tasks.add(startup_task)
+        startup_task.add_done_callback(self._background_tasks.discard)    
 
     async def _get_client_tools(self) -> List[Tool]:
         """Return tools available to the current client"""
@@ -1257,6 +1263,7 @@ class AIMemoryMCPServer:
         self.client_context = {}  # Track client-specific context
         self._maintenance_task = None  # Background maintenance task
         self._http_server_task = None  # HTTP API server task (for graceful shutdown)
+        self._background_tasks = set()  # Background task tracking for async lifecycle management
         # Semaphore to limit concurrent database/embedding access (prevents system freeze)
         # Allows up to 3 simultaneous operations, queues the rest
         self.db_semaphore = asyncio.Semaphore(3)
@@ -2230,7 +2237,9 @@ class AIMemoryMCPServer:
                 """, (reminder_id, created_at, due_datetime, content, priority_level, 0, source_conversation_id, created_at))
                 conn.commit()
                 print(f"✅ Reminder created with ID: {reminder_id}")
-                asyncio.create_task(self._add_embedding_to_reminder(reminder_id, content))
+                embedding_task = asyncio.create_task(self._add_embedding_to_reminder(reminder_id, content))
+                self._background_tasks.add(embedding_task)
+                embedding_task.add_done_callback(self._background_tasks.discard)
                 return {
                     "status": "success",
                     "reminder_id": reminder_id,
@@ -2997,7 +3006,7 @@ class AIMemoryMCPServer:
             execution_time_ms = (end_time - start_time) * 1000
 
             try:
-                asyncio.create_task(
+                log_task = asyncio.create_task(
                     self.memory_system.log_tool_call(
                         client_id=client_id,
                         tool_name=tool_name,
@@ -3008,6 +3017,8 @@ class AIMemoryMCPServer:
                         source=source,
                     )
                 )
+                self._background_tasks.add(log_task)
+                log_task.add_done_callback(self._background_tasks.discard)
             except Exception as log_error:
                 logger.warning(f"Could not log tool call: {log_error}")
 
@@ -3027,7 +3038,7 @@ class AIMemoryMCPServer:
             end_time = time.perf_counter()
             execution_time_ms = (end_time - start_time) * 1000
             try:
-                asyncio.create_task(
+                error_log_task = asyncio.create_task(
                     self.memory_system.log_tool_call(
                         client_id=client_id,
                         tool_name=tool_name,
@@ -3038,6 +3049,8 @@ class AIMemoryMCPServer:
                         source=source,
                     )
                 )
+                self._background_tasks.add(error_log_task)
+                error_log_task.add_done_callback(self._background_tasks.discard)
             except Exception as log_error:
                 logger.warning(f"Could not log tool call failure: {log_error}")
 
@@ -3462,6 +3475,8 @@ async def main():
     srv._http_server_task = asyncio.create_task(
         start_http_server(srv, host="127.0.0.1", port=None)
     )
+    srv._background_tasks.add(srv._http_server_task)
+    srv._http_server_task.add_done_callback(srv._background_tasks.discard)
     
     try:
         from mcp.server.lowlevel.server import InitializationOptions, NotificationOptions

@@ -5024,7 +5024,9 @@ class AIMemorySystem:
         # Start maintenance loop, file monitoring, etc.
         await self.run_database_maintenance()
         # Start periodic maintenance in background (every 24 hours)
-        asyncio.create_task(self._periodic_maintenance_loop())
+        maintenance_task = asyncio.create_task(self._periodic_maintenance_loop())
+        self._background_tasks.add(maintenance_task)
+        maintenance_task.add_done_callback(self._background_tasks.discard)
         await self._start_monitoring()
         # ...other background tasks as needed...
     
@@ -5145,6 +5147,9 @@ class AIMemorySystem:
         # Initialize reminder escalation background task
         self._escalation_task = None
         self._escalation_running = False
+        
+        # Background task tracking for async task lifecycle management
+        self._background_tasks = set()
     
     # === Embedding Configuration Management ===
     def _capture_embedding_config(self) -> Dict[str, Any]:
@@ -6718,7 +6723,9 @@ class AIMemorySystem:
         )
         
         # Generate and store embedding asynchronously
-        asyncio.create_task(self._add_embedding_to_message(result["message_id"], content))
+        embedding_task = asyncio.create_task(self._add_embedding_to_message(result["message_id"], content))
+        self._background_tasks.add(embedding_task)
+        embedding_task.add_done_callback(self._background_tasks.discard)
         
         return {
             "status": "success",
@@ -6849,7 +6856,9 @@ class AIMemorySystem:
                 }
         else:
             # Generate and store embedding asynchronously (background task)
-            asyncio.create_task(self._add_embedding_to_memory(memory_id, content))
+            embedding_task = asyncio.create_task(self._add_embedding_to_memory(memory_id, content))
+            self._background_tasks.add(embedding_task)
+            embedding_task.add_done_callback(self._background_tasks.discard)
         
         return {
             "status": "success",
@@ -6871,7 +6880,9 @@ class AIMemorySystem:
         
         # If content was updated, regenerate embedding
         if content is not None:
-            asyncio.create_task(self._add_embedding_to_memory(memory_id, content))
+            embedding_task = asyncio.create_task(self._add_embedding_to_memory(memory_id, content))
+            self._background_tasks.add(embedding_task)
+            embedding_task.add_done_callback(self._background_tasks.discard)
         
         return {
             "status": "success" if success else "error",
@@ -6930,7 +6941,9 @@ class AIMemorySystem:
         
         # Add embeddings for all created appointments
         for appointment_id in appointment_ids:
-            asyncio.create_task(self._add_embedding_to_appointment(appointment_id, content_for_embedding))
+            embedding_task = asyncio.create_task(self._add_embedding_to_appointment(appointment_id, content_for_embedding))
+            self._background_tasks.add(embedding_task)
+            embedding_task.add_done_callback(self._background_tasks.discard)
         
         return {
             "status": "success",
@@ -6971,7 +6984,9 @@ class AIMemorySystem:
         if isinstance(reminder_result, list):
             # Multiple reminders created
             for reminder_id in reminder_result:
-                asyncio.create_task(self._add_embedding_to_reminder(reminder_id, content))
+                embedding_task = asyncio.create_task(self._add_embedding_to_reminder(reminder_id, content))
+                self._background_tasks.add(embedding_task)
+                embedding_task.add_done_callback(self._background_tasks.discard)
             return {
                 "status": "success",
                 "reminder_ids": reminder_result,
@@ -6979,7 +6994,9 @@ class AIMemorySystem:
             }
         else:
             # Single reminder created
-            asyncio.create_task(self._add_embedding_to_reminder(reminder_result, content))
+            embedding_task = asyncio.create_task(self._add_embedding_to_reminder(reminder_result, content))
+            self._background_tasks.add(embedding_task)
+            embedding_task.add_done_callback(self._background_tasks.discard)
             return {
                 "status": "success",
                 "reminder_id": reminder_result
@@ -7009,7 +7026,9 @@ class AIMemorySystem:
         )
         
         # Generate and store embedding for the insight content
-        asyncio.create_task(self._add_embedding_to_project_insight(insight_id, content))
+        embedding_task = asyncio.create_task(self._add_embedding_to_project_insight(insight_id, content))
+        self._background_tasks.add(embedding_task)
+        embedding_task.add_done_callback(self._background_tasks.discard)
         
         return {
             "status": "success",
@@ -7263,7 +7282,9 @@ class AIMemorySystem:
         )
         
         # Generate and store embedding for the description
-        asyncio.create_task(self._add_embedding_to_code_context(context_id, description))
+        embedding_task = asyncio.create_task(self._add_embedding_to_code_context(context_id, description))
+        self._background_tasks.add(embedding_task)
+        embedding_task.add_done_callback(self._background_tasks.discard)
         
         return {
             "status": "success",
