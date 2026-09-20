@@ -1,7 +1,7 @@
 """
 title: AI Short Term Memory v0.0.4 - Short term memory plugin for OpenWebUI
 author: Nate
-version: 1.0.1
+version: 2.0.0
 ---
 
 # Overview
