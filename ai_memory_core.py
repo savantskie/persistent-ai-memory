@@ -330,8 +330,11 @@ class ConversationDatabase(DatabaseManager):
                     conversation_id TEXT NOT NULL,
                     memory_id TEXT,
                     status TEXT NOT NULL,
+                    processing_type TEXT,
                     priority INTEGER DEFAULT 5,
                     attempts INTEGER DEFAULT 0,
+                    message_count INTEGER DEFAULT 0,
+                    marked_processed INTEGER DEFAULT 0,
                     last_attempt TEXT,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -344,9 +347,10 @@ class ConversationDatabase(DatabaseManager):
                     log_id TEXT PRIMARY KEY,
                     conversation_id TEXT NOT NULL,
                     memory_id TEXT,
-                    action TEXT NOT NULL,
+                    processing_type TEXT NOT NULL,
                     status TEXT NOT NULL,
-                    error_message TEXT,
+                    action TEXT NOT NULL,
+                    reason TEXT,
                     result_metadata TEXT,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )
@@ -930,13 +934,15 @@ class AIMemoryDatabase(DatabaseManager):
         await self.execute_update(
             """INSERT INTO curated_memories 
             (memory_id, timestamp_created, timestamp_updated, source_conversation_id,
+                source_message_ids,
                 memory_type, content, importance_level, tags, memory_bank, user_id, model_id, source)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 memory_id,
                 timestamp,
                 timestamp,
                 source_conversation_id,
+                None,
                 memory_type,
                 formatted_content,
                 importance_level,
@@ -5031,11 +5037,11 @@ class AIMemorySystem:
         # ...other background tasks as needed...
     
     async def _periodic_maintenance_loop(self):
-        """Run database maintenance periodically every 24 hours"""
+        """Run database maintenance periodically every 4 hours"""
         while True:
             try:
-                # Wait 24 hours before running maintenance again
-                await asyncio.sleep(86400)  # 86400 seconds = 24 hours
+                # Wait 4 hours before running maintenance again
+                await asyncio.sleep(14400)  # 14400 seconds = 4 hours
                 logger.info("⏰ Running periodic database maintenance...")
                 await self.run_database_maintenance()
             except asyncio.CancelledError:
@@ -8013,10 +8019,16 @@ Return JSON:
                         conn = sqlite3.connect(db_path)
                         conn.row_factory = sqlite3.Row
 
-                        sql = """SELECT message_id, conversation_id, timestamp, role, content, metadata, embedding
+                        sql = """SELECT message_id, conversation_id, timestamp, role, content, metadata, embedding, user_id, model_id
                                 FROM messages WHERE 1=1"""
                         params = []
 
+                        if user_id:
+                            sql += " AND user_id = ?"
+                            params.append(user_id)
+                        if model_id:
+                            sql += " AND model_id = ?"
+                            params.append(model_id)
                         if ts_start:
                             sql += " AND CAST(strftime('%s', timestamp) AS INTEGER) >= ?"
                             params.append(ts_start)
@@ -9882,8 +9894,9 @@ Performance Assessment:"""
     async def run_database_maintenance(self, force: bool = False) -> Dict:
         """Run database maintenance including cleanup and optimization"""
         try:
+            if hasattr(self, 'db_maintenance') and self.db_maintenance is not None:
+                return await self.db_maintenance.run_maintenance(force)
             from database_maintenance import DatabaseMaintenance
-            
             maintenance = DatabaseMaintenance(self)
             return await maintenance.run_maintenance(force)
             

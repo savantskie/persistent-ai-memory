@@ -193,7 +193,7 @@ def update_settings(**kwargs) -> MemorySettings:
 
 if __name__ == "__main__":
     # Print current configuration for debugging
-    print("🔧 AI Memory System Configuration")
+    print("AI Memory System Configuration")
     print("=" * 40)
     print(f"Data Directory: {settings.data_dir}")
     print(f"Embedding Provider: {settings.embedding_provider}")

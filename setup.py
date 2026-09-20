@@ -10,7 +10,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="persistent-ai-memory",
-    version="1.0.0",
+    version="1.0.1",
     author="Collaborative AI Development Team",
     author_email="",
     description="A comprehensive, real-time memory system for AI assistants",

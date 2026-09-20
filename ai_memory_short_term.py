@@ -1,7 +1,7 @@
 """
 title: AI Short Term Memory v0.0.4 - Short term memory plugin for OpenWebUI
 author: Nate
-version: 0.0.22
+version: 1.0.1
 ---
 
 # Overview
@@ -326,7 +326,19 @@ class ImageManager:
                 ON images(created_at)
                 """
             )
-            
+
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS image_embeddings (
+                    image_hash TEXT PRIMARY KEY,
+                    embedding_b64 TEXT NOT NULL,
+                    n_tokens INTEGER NOT NULL,
+                    n_embd INTEGER NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+
             conn.commit()
             conn.close()
             logger.info(f"ImageManager initialized: {self.db_path}")
@@ -449,6 +461,56 @@ class ImageManager:
             return True
         except Exception as e:
             logger.error(f"Failed to delete image {image_hash}: {e}")
+            if conn:
+                conn.rollback()
+            return False
+        finally:
+            if conn:
+                conn.close()
+
+    def get_embedding(self, image_hash: str) -> Optional[Dict]:
+        """Retrieve cached embedding for image hash. Returns {embedding_b64, n_tokens, n_embd} or None."""
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT embedding_b64, n_tokens, n_embd FROM image_embeddings WHERE image_hash = ?",
+                (image_hash,),
+            )
+            row = cursor.fetchone()
+            if row:
+                return {
+                    "embedding_b64": row[0],
+                    "n_tokens": row[1],
+                    "n_embd": row[2],
+                }
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get embedding for {image_hash}: {e}")
+            return None
+        finally:
+            if conn:
+                conn.close()
+
+    def store_embedding(self, image_hash: str, embedding_b64: str, n_tokens: int, n_embd: int) -> bool:
+        """Cache a precomputed vision embedding. Returns True if stored, False on error."""
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO image_embeddings (image_hash, embedding_b64, n_tokens, n_embd)
+                VALUES (?, ?, ?, ?)
+                """,
+                (image_hash, embedding_b64, n_tokens, n_embd),
+            )
+            conn.commit()
+            logger.info(f"Stored embedding for image {image_hash}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to store embedding for {image_hash}: {e}")
             if conn:
                 conn.rollback()
             return False
@@ -911,6 +973,49 @@ What details are relevant to remember about this image? Describe only the key vi
         
         return None
 
+    async def _get_image_embedding(self, image_base64: str, image_hash: str) -> Optional[Dict]:
+        """Get precomputed image embedding from vision server or cache."""
+        if self.image_manager:
+            cached = await asyncio.to_thread(
+                self.image_manager.get_embedding, image_hash
+            )
+            if cached:
+                logger.info(f"Image embedding cache hit for hash {image_hash}")
+                return cached
+
+        logger.info(f"Image embedding cache miss for hash {image_hash}, querying vision server")
+        try:
+            timeout = aiohttp.ClientTimeout(total=120)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                payload = {"image": image_base64, "b64": True}
+                async with session.post(
+                    self.valves.vision_embedding_url, json=payload,
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        result = {
+                            "embedding_b64": data.get("embedding_b64"),
+                            "n_tokens": data.get("n_tokens"),
+                            "n_embd": data.get("n_embd"),
+                        }
+                        if result["embedding_b64"] and result["n_tokens"] and result["n_embd"]:
+                            if self.image_manager:
+                                await asyncio.to_thread(
+                                    self.image_manager.store_embedding,
+                                    image_hash, result["embedding_b64"],
+                                    result["n_tokens"], result["n_embd"],
+                                )
+                            logger.info(f"Stored image embedding for hash {image_hash}")
+                            return result
+                        else:
+                            logger.error(f"Vision server returned incomplete response: {data}")
+                    else:
+                        error_text = await resp.text()
+                        logger.error(f"Vision server returned status {resp.status}: {error_text}")
+        except Exception as e:
+            logger.error(f"Error getting image embedding from vision server: {e}")
+        return None
+
     # ========================================================================
     # NESTED: Async method for LM Studio embeddings
     # ========================================================================
@@ -1037,6 +1142,10 @@ What details are relevant to remember about this image? Describe only the key vi
         memory_promotion_age_threshold_days: int = Field(
             default=90,
             description="How old (in days) a memory must be before it gets moved from short-term to long-term storage",
+        )
+        clean_promoted_memories: bool = Field(
+            default=True,
+            description="After a memory is verified as promoted into long-term storage, delete the short-term (OpenWebUI) copy.",
         )
         enable_memory_linking_task: bool = Field(
             default=True,
@@ -1226,6 +1335,12 @@ Analyze the following related memories and provide a concise summary.""",
         )
         # --- End Embedding Model Configuration ---
 
+        # Vision server for precomputed image embeddings (separate mmproj host)
+        vision_embedding_url: str = Field(
+            default="http://localhost:8082/vision/embedding",
+            description="URL of the llama.cpp vision server with mmproj loaded for precomputed image embeddings",
+        )
+
         # Memory processing settings
         related_memories_n: int = Field(
             default=5,
@@ -1285,8 +1400,19 @@ Analyze the following related memories and provide a concise summary.""",
         )
 
         similarity_threshold: float = Field(
-            default=0.95,  # Tighten duplicate detection to minimise false positives
+            default=0.95,
             description="How similar two memories need to be by text comparison (0-1) to count as duplicates",
+        )
+
+        # --- Cross-System Deduplication Configuration ---
+        semantic_duplicate_threshold: float = Field(
+            default=0.85,
+            description="Embedding similarity threshold (0-1) for detecting semantic duplicates when promoting memories to long-term system.",
+        )
+
+        log_memory_deduplication_checks: bool = Field(
+            default=True,
+            description="Log every memory deduplication check. If False, only log when duplicates are found.",
         )
 
         # Time settings
@@ -2452,6 +2578,10 @@ Analyze the following conversation and provide a concise summary.""",
 
         # Track that background tasks are not yet re-initialised via inlet()
         self._background_tasks_started: bool = False
+
+        # Guard flags to prevent concurrent/duplicate retroactive embedding
+        self._retroactive_embedding_in_progress = False
+        self._retroactive_embedding_completed = False
 
     def _sync_embedding_config_to_friday(self) -> None:
         """
@@ -4087,7 +4217,7 @@ Produce ONLY the corrected JSON output following the format specified in the sys
                     # Get all users from OpenWebUI
 
                     # Get all users (assuming we can iterate through all users)
-                    all_users = await Users.get_all_users()
+                    all_users = await Users.get_users()
                     if not all_users:
                         logger.warning("No users found for memory promotion.")
                         continue
@@ -4152,7 +4282,28 @@ Produce ONLY the corrected JSON output following the format specified in the sys
                                     # Extract model_card_name from metadata for proper model isolation
                                     mem_metadata = mem.get("metadata", {}) or {}
                                     model_card_name = mem_metadata.get("model_card_name", "friday")  # Fallback to "friday"
-                                    
+
+                                    # --- PHASE 3: Cross-System Deduplication Check ---
+                                    # Check if this memory already exists in the long-term system
+                                    if FRIDAY_MEMORY_SYSTEM_AVAILABLE:
+                                        try:
+                                            from ai_memory_core import AIMemorySystem
+                                            memory_system = AIMemorySystem()
+                                            dup_check = await self._check_duplicate_in_fms(
+                                                mem, user_id, model_card_name, memory_system
+                                            )
+                                            if dup_check.get("action") == "skip":
+                                                logger.info(f"Skipping promotion for memory {mem.get('id')}: {dup_check.get('reason')}")
+                                                continue
+                                            if dup_check.get("action") == "merged":
+                                                successfully_promoted_ids.append(mem.get("id"))
+                                                logger.info(f"Merged memory {mem.get('id')} into existing FMS memory {dup_check.get('fms_memory_id')}")
+                                                continue
+                                        except ImportError:
+                                            memory_system = None
+                                        except Exception as e:
+                                            logger.error(f"Cross-system dedup check failed: {e}")
+
                                     # Add promotion metadata
                                     metadata = {
                                         "source": "openwebui_promotion",
@@ -4340,6 +4491,71 @@ Produce ONLY the corrected JSON output following the format specified in the sys
             logger.error(
                 f"Fatal error in memory promotion task loop: {e}\n{traceback.format_exc()}"
             )
+
+    async def _check_duplicate_in_fms(self, mem: Dict, user_id: str, model_card_name: str, memory_system) -> Dict:
+        """Check if this short-term memory already exists in the long-term FMS system.
+        Returns dict with action: 'promote', 'skip', or 'merged'."""
+        mem_content = mem.get("memory", "")
+        if not mem_content:
+            return {"action": "promote"}
+
+        try:
+            existing = await memory_system.search_memories(
+                query=mem_content[:100],
+                user_id=user_id,
+                model_id=model_card_name,
+                min_importance=1,
+                limit=5,
+            )
+            if not existing:
+                return {"action": "promote"}
+
+            for fms_mem in existing:
+                fms_content = fms_mem.get("content", "")
+                if not fms_content:
+                    continue
+
+                if fms_content.strip().lower() == mem_content.strip().lower():
+                    if self.valves.log_memory_deduplication_checks:
+                        logger.info(f"EXACT DUPLICATE: {fms_mem.get('memory_id')}. Deleting FMS version and promoting fresh...")
+                    await memory_system.delete_memory(memory_id=fms_mem["memory_id"])
+                    return {"action": "promote"}
+
+                similarity = await self._calculate_embedding_similarity(mem_content, fms_content)
+                if similarity >= self.valves.semantic_duplicate_threshold:
+                    if self.valves.log_memory_deduplication_checks:
+                        logger.info(f"SEMANTIC DUPLICATE: similarity={similarity:.3f}, merging...")
+                    merged = await self._synthesize_merged_memory(mem_content, fms_content, memory_system)
+                    await memory_system.update_memory(
+                        memory_id=fms_mem["memory_id"],
+                        content=merged,
+                        importance_level=max(fms_mem.get("importance_level", 5), 5),
+                    )
+                    return {"action": "merged", "fms_memory_id": fms_mem["memory_id"]}
+
+                if self.valves.log_memory_deduplication_checks:
+                    logger.debug(f"Not a duplicate: similarity={similarity:.3f} < threshold={self.valves.semantic_duplicate_threshold}")
+
+        except Exception as e:
+            logger.warning(f"Error checking duplicate in FMS: {e}")
+        return {"action": "promote"}
+
+    async def _synthesize_merged_memory(self, new_content: str, old_content: str, memory_system) -> str:
+        """Use LLM to merge new and old memory content when a semantic duplicate is found."""
+        try:
+            prompt = (
+                "Merge these two memory entries about the same topic into a single, concise memory.\n\n"
+                f"EXISTING MEMORY: {old_content}\n\n"
+                f"NEW INFORMATION: {new_content}\n\n"
+                "Output ONLY the merged memory text. Keep all factual details. Use natural language."
+            )
+            system_prompt = "You are a memory merging assistant. Combine information without losing any facts."
+            merged = await self.query_llm_with_retry(system_prompt, prompt)
+            if merged and len(merged) > 20:
+                return merged
+        except Exception as e:
+            logger.warning(f"Failed to synthesize merged memory, using new content: {e}")
+        return new_content
 
     async def _ensure_memories_linked_to_conversations_loop(self):
         """
@@ -4910,6 +5126,17 @@ Produce ONLY the corrected JSON output following the format specified in the sys
         /memory unmark_important [id], /memory list_banks, /memory assign_bank [id] [bank]
         """
         self._last_inlet_time = datetime.now(timezone.utc)
+        # Cross-process activity heartbeat: the TaskCoordinator reads
+        # this file's mtime to know the user is active and hold off nightly work.
+        try:
+            _hb = os.environ.get(
+                "AI_MEMORY_INLET_HEARTBEAT",
+                os.path.join(os.environ.get("AI_MEMORY_DATA_DIR", "./memory_data"), "last_inlet.touch"),
+            )
+            with open(_hb, "w") as _f:
+                _f.write(self._last_inlet_time.isoformat())
+        except Exception:
+            pass
         logger.debug(
             f"Inlet received body keys: {list(body.keys())} for user: {__user__.get('id', 'N/A') if __user__ else 'N/A'}"
         )
@@ -5209,6 +5436,78 @@ Produce ONLY the corrected JSON output following the format specified in the sys
                 except Exception as e:
                     logger.error(f"Error analyzing image: {e}")
                     # Continue with other images
+
+            # --- Precomputed Image Embedding Pass ---
+            # Replace image_url content with precomputed embeddings for the main LLM
+            logger.debug(f"Generating precomputed embeddings for {len(images)} image(s)")
+            for img_info in images:
+                try:
+                    image_hash = self._generate_image_hash(img_info["url"])
+                    raw_url = img_info["url"]
+                    if raw_url.startswith("data:image/"):
+                        base64_data = raw_url.split(",", 1)[-1] if "," in raw_url else raw_url
+                    else:
+                        logger.debug(f"Skipping non-base64 image URL: {raw_url[:50]}...")
+                        continue
+                    embedding = await self._get_image_embedding(base64_data, image_hash)
+                    if embedding:
+                        messages = body.get("messages", [])
+                        if messages:
+                            user_content = messages[-1].get("content", [])
+                            if isinstance(user_content, list):
+                                for part in user_content:
+                                    if (
+                                        isinstance(part, dict)
+                                        and part.get("type") == "image_url"
+                                        and isinstance(part.get("image_url"), dict)
+                                        and part["image_url"].get("url") == img_info["url"]
+                                    ):
+                                        part["type"] = "image_embedding_b64"
+                                        part["image_embedding_b64"] = {
+                                            "n_tokens": embedding["n_tokens"],
+                                            "n_embd": embedding["n_embd"],
+                                            "embedding_b64": embedding["embedding_b64"],
+                                        }
+                                        del part["image_url"]
+                                        logger.info(f"Replaced image_url with precomputed embedding for hash {image_hash}")
+                                        break
+                    else:
+                        logger.warning(f"Failed to get precomputed embedding for image {image_hash}, leaving image_url in place")
+                except Exception as e:
+                    logger.error(f"Error in precomputed embedding pass: {e}")
+
+        # --- Historical Image Embedding Injection ---
+        # Scan ALL messages for remaining image_url parts and replace with cached embeddings
+        if self.image_manager:
+            all_messages = body.get("messages", [])
+            for msg_idx, msg in enumerate(all_messages):
+                content = msg.get("content", [])
+                if not isinstance(content, list):
+                    continue
+                for part_idx, part in enumerate(content):
+                    if (
+                        isinstance(part, dict)
+                        and part.get("type") == "image_url"
+                        and isinstance(part.get("image_url"), dict)
+                    ):
+                        img_url = part["image_url"].get("url", "")
+                        if not img_url or not img_url.startswith("data:image/"):
+                            continue
+                        base64_data = img_url.split(",", 1)[-1] if "," in img_url else img_url
+                        image_hash = self._generate_image_hash(img_url)
+                        try:
+                            embedding = await self._get_image_embedding(base64_data, image_hash)
+                            if embedding:
+                                part["type"] = "image_embedding_b64"
+                                part["image_embedding_b64"] = {
+                                    "n_tokens": embedding["n_tokens"],
+                                    "n_embd": embedding["n_embd"],
+                                    "embedding_b64": embedding["embedding_b64"],
+                                }
+                                del part["image_url"]
+                                logger.info(f"Historical image embedding injected for hash {image_hash} (msg {msg_idx}, part {part_idx})")
+                        except Exception as e:
+                            logger.warning(f"Failed to inject historical image embedding for hash {image_hash}: {e}")
 
         # --- Command Handling ---
         # Check if the final message is a command before processing memories
@@ -5892,6 +6191,18 @@ Produce ONLY the corrected JSON output following the format specified in the sys
         
         Also checks embeddings_completed.log to skip full retroactive embedding if recently completed.
         """
+        # Guard 1 - Prevent running multiple times in same session
+        if self._retroactive_embedding_completed:
+            logger.info("Retroactive embedding already completed this session, skipping")
+            return
+        
+        # Guard 2 - Prevent concurrent runs
+        if self._retroactive_embedding_in_progress:
+            logger.warning("Retroactive embedding already in progress, skipping duplicate run")
+            return
+        
+        self._retroactive_embedding_in_progress = True
+        
         try:
             await asyncio.sleep(2)  # Give plugin time to fully initialize
             
@@ -6095,10 +6406,15 @@ Produce ONLY the corrected JSON output following the format specified in the sys
             except Exception as e:
                 logger.warning(f"Could not write embeddings_completed.log: {e}")
 
+                self._retroactive_embedding_completed = True
+                self._retroactive_embedding_in_progress = False
+                logger.info("Retroactive embedding task completed and marked for session")
+
         except Exception as e:
             logger.error(
                 f"Fatal error during retroactive embedding: {e}\n{traceback.format_exc()}"
             )
+            self._retroactive_embedding_in_progress = False
 
     def _is_ok_to_run_background_task(self) -> bool:
             """Check if conditions are right to run heavy background tasks.

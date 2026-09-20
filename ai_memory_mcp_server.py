@@ -1277,6 +1277,8 @@ class AIMemoryMCPServer:
         self._reload_task = None
         self._is_reloading = False
         self._monitoring_thread = None  # File monitoring thread reference
+        # Track tool call history per user:model for loop detection
+        self._tool_call_history: Dict[str, Dict] = {}
         
         # Start file monitoring in background thread (doesn't wait for initialization event)
         def start_file_monitoring():
@@ -2289,8 +2291,67 @@ class AIMemoryMCPServer:
         """Wrap a memory system coroutine with semaphore protection to limit concurrent access"""
         async with self.db_semaphore:
             return await coro
-           
-    
+
+    def _check_tool_loop(self, tool_name: str, arguments: Dict, user_id: str, model_id: str) -> Optional[Dict]:
+        """Detect repeated identical tool calls and return a loop-error response if needed.
+
+        Tracks per user:model key in self._tool_call_history.
+        Two-tier threshold:
+          - Previous identical call succeeded -> block on 2nd repeat (pedantic)
+          - Previous identical call errored   -> block on 3rd repeat
+        Resets if tool_name OR arguments change.
+        Prunes entries older than 60 seconds.
+        """
+        import json, time
+
+        key = f"{user_id}:{model_id}"
+        args_key = json.dumps(arguments, sort_keys=True)
+        now = time.time()
+
+        stale_keys = [k for k, v in self._tool_call_history.items() if now - v.get("timestamp", 0) > 60]
+        for k in stale_keys:
+            self._tool_call_history.pop(k, None)
+
+        prev = self._tool_call_history.get(key)
+
+        if prev and prev.get("tool_name") == tool_name and prev.get("args_key") == args_key:
+            prev["count"] += 1
+            prev["timestamp"] = now
+
+            if prev["count"] >= 2 and prev.get("last_was_success", False):
+                error_msg = (
+                    f"You already called '{tool_name}' with these arguments and got a successful result back. "
+                    f"You already have this information \u2014 ask the user before calling it again."
+                )
+                logger.warning(f"LOOP DETECTED (pedantic repeat): {tool_name} called {prev['count']}x with same args")
+                return {
+                    "content": [{"type": "text", "text": error_msg}],
+                    "success": False,
+                    "isError": True,
+                }
+
+            if prev["count"] >= 3:
+                error_msg = (
+                    f"You've called '{tool_name}' with identical arguments {prev['count']} times "
+                    f"and keep getting errors. Try a different approach or ask the user for clarification."
+                )
+                logger.warning(f"LOOP DETECTED (3rd repeat): {tool_name} called {prev['count']}x with same args")
+                return {
+                    "content": [{"type": "text", "text": error_msg}],
+                    "success": False,
+                    "isError": True,
+                }
+        else:
+            self._tool_call_history[key] = {
+                "tool_name": tool_name,
+                "args_key": args_key,
+                "count": 1,
+                "last_was_success": None,
+                "timestamp": now,
+            }
+
+        return None
+
     async def _execute_tool(self, tool_name: str, arguments: Dict[str, Any]) -> CallToolResult:
         """Execute the requested tool with logging for AI self-reflection"""
         import time
@@ -2337,6 +2398,13 @@ class AIMemoryMCPServer:
                 "success": False,
                 "isError": True,
             }
+
+        # ---------------------------------------------------------------------
+        # LOOP DETECTION: Check for repeated identical tool calls
+        # ---------------------------------------------------------------------
+        loop_check = self._check_tool_loop(tool_name, arguments, user_id, model_id)
+        if loop_check:
+            return loop_check
 
         # Log the incoming call with user/model info
         logger.info(f"🔧 Tool called: {tool_name} | user_id={user_id} | model_id={model_id}")
@@ -3025,6 +3093,11 @@ class AIMemoryMCPServer:
             # Normalize result to text
             result_text = json.dumps(result, indent=2, default=str) if isinstance(result, (dict, list)) else str(result)
 
+            # Update tool call history with success result
+            hist_key = f"{user_id}:{model_id}"
+            if hist_key in self._tool_call_history:
+                self._tool_call_history[hist_key]["last_was_success"] = True
+
             return {
                 "content": [{"type": "text", "text": result_text}],
                 "success": True,
@@ -3055,6 +3128,12 @@ class AIMemoryMCPServer:
                 logger.warning(f"Could not log tool call failure: {log_error}")
 
             logger.error(f"Error executing tool {tool_name}: {e}")
+
+            # Update tool call history with error result
+            hist_key = f"{user_id}:{model_id}"
+            if hist_key in self._tool_call_history:
+                self._tool_call_history[hist_key]["last_was_success"] = False
+
             return {
                 "content": [{"type": "text", "text": f"Error: {str(e)}"}],
                 "success": False,
@@ -3486,7 +3565,7 @@ async def main():
                 write_stream,
                 InitializationOptions(
                     server_name="friday-memory",
-                    server_version="1.0.0",
+                    server_version="1.0.1",
                     capabilities=srv.server.get_capabilities(
                         notification_options=NotificationOptions(),
                         experimental_capabilities={}

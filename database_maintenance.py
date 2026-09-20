@@ -13,9 +13,15 @@ from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 import os
 import json
+import re
 
 from tag_manager import TagManager
 from utils import get_memory_data_dir
+
+try:
+    from ai_memory_maintenance import LongTermMemoryMaintenance
+except ImportError:
+    LongTermMemoryMaintenance = None
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +96,14 @@ class DatabaseMaintenance:
                 "preserve_important": True  # Keep all images (linked to memories)
             }
         }
+        
+        # Long-term memory maintenance (LLM-powered) — optional dependency
+        if LongTermMemoryMaintenance is not None:
+            self.ltm_maintenance = LongTermMemoryMaintenance(
+                memory_system=memory_system
+            )
+        else:
+            self.ltm_maintenance = None
     
     # ===== Database Discovery & Lifecycle Management =====
     
@@ -1827,10 +1841,28 @@ class DatabaseMaintenance:
             results["tag_registry"] = await self._build_tag_registries()
             
             # 7. Build memory_bank registries
-            logger.info("🏦 Building memory_bank registries...")
+            logger.info("Building memory_bank registries...")
             results["memory_bank_registry"] = await self._build_memory_bank_registries()
-            
-            logger.info("✅ Database maintenance completed successfully")
+
+            # 8. Retroactively link unlinked memories to conversations
+            logger.info("Retroactively linking unlinked memories to conversations...")
+            results["retroactive_linking"] = await self._retroactively_link_memories()
+
+            # 9. Reformat long-term memories (if LTM module available)
+            if self.ltm_maintenance is not None:
+                logger.info("Reformatting long-term memories to match current format...")
+                results["ltm_reformat"] = await self.ltm_maintenance.reformat_memories(limit=100)
+
+                # 10. Scan for contradictions/updates between long-term memories
+                logger.info("Scanning long-term memories for contradictions and updates...")
+                results["ltm_updates"] = await self.ltm_maintenance.scan_for_updates(limit=200)
+                results["ltm_linking"] = await self.ltm_maintenance.assist_linking(limit=50)
+
+            # NOTE: the memory backlog processor (dedupe -> identity/conv-id
+            # backfill -> LLM importance re-rank) is NOT run here. It is scheduled
+            # as its own nightly, quiet-hours, deadline-bounded coordinator task.
+
+            logger.info("Database maintenance completed successfully")
             
         except Exception as e:
             logger.error(f"❌ Database maintenance failed: {e}")
@@ -2293,6 +2325,48 @@ class DatabaseMaintenance:
             logger.info("Checking messages table schema...")
             messages_upgrades = await self._upgrade_messages_schema()
             upgrades_applied.extend(messages_upgrades)
+            
+            # 3. Upgrade memory_processing_queue schema
+            logger.info("Checking memory_processing_queue schema...")
+            conn = self.memory_system.conversations_db.get_connection()
+            try:
+                for col_name, col_def in [
+                    ("processing_type", "TEXT"),
+                    ("message_count", "INTEGER DEFAULT 0"),
+                    ("marked_processed", "INTEGER DEFAULT 0"),
+                ]:
+                    cursor = conn.execute(
+                        "SELECT COUNT(*) FROM pragma_table_info('memory_processing_queue') WHERE name=?",
+                        (col_name,)
+                    )
+                    if cursor.fetchone()[0] == 0:
+                        conn.execute(f"ALTER TABLE memory_processing_queue ADD COLUMN {col_name} {col_def}")
+                        conn.commit()
+                        upgrades_applied.append(f"added_{col_name}_to_processing_queue")
+                        logger.info(f"Added {col_name} column to memory_processing_queue")
+            finally:
+                conn.close()
+
+            # 4. Upgrade memory_processing_log schema
+            logger.info("Checking memory_processing_log schema...")
+            conn = self.memory_system.conversations_db.get_connection()
+            try:
+                cursor = conn.execute(
+                    "SELECT COUNT(*) FROM pragma_table_info('memory_processing_log') WHERE name=?",
+                    ("reason",)
+                )
+                if cursor.fetchone()[0] == 0:
+                    cursor = conn.execute(
+                        "SELECT COUNT(*) FROM pragma_table_info('memory_processing_log') WHERE name=?",
+                        ("error_message",)
+                    )
+                    if cursor.fetchone()[0] > 0:
+                        conn.execute("ALTER TABLE memory_processing_log RENAME COLUMN error_message TO reason")
+                        conn.commit()
+                        upgrades_applied.append("renamed_error_message_to_reason")
+                        logger.info("Renamed error_message to reason in memory_processing_log")
+            finally:
+                conn.close()
                 
         except Exception as e:
             logger.error(f"Error during schema upgrades: {e}")
@@ -2673,11 +2747,120 @@ class DatabaseMaintenance:
             
             logger.info(f"Memory-conversation link validation complete: {results}")
             return results
-            
+
         except Exception as e:
             logger.error(f"Error validating memory-conversation links: {e}")
             return {"error": str(e)}
-    
+
+    async def _retroactively_link_memories(self) -> Dict:
+        """Find archived memories missing conversation links and attempt to match them."""
+        results = {"scanned": 0, "linked": 0, "unmatched": 0, "errors": 0}
+
+        try:
+            memories = await self.memory_system.ai_memory_db.execute_query(
+                """SELECT memory_id, content, user_id, model_id, source_conversation_id
+                   FROM curated_memories
+                   WHERE source_conversation_id IS NULL
+                      OR TRIM(source_conversation_id) = ''
+                      OR source_conversation_id LIKE '%_pruned'
+                ORDER BY timestamp_created DESC""", ()
+            )
+            if not memories:
+                logger.info("No unlinked memories found")
+                return results
+
+            results["scanned"] = len(memories)
+
+            linked_rows = await self.memory_system.conversations_db.execute_query(
+                "SELECT DISTINCT memory_id FROM memory_conversation_links", ()
+            )
+            already_linked = {row["memory_id"] for row in linked_rows} if linked_rows else set()
+
+            for mem in memories:
+                mem_id = mem["memory_id"]
+                if mem_id in already_linked:
+                    continue
+
+                content = mem["content"] or ""
+                mem_user_id = mem.get("user_id") or ""
+
+                stripped_for_match = re.sub(r'^\[Tags:[^\]]*\]\s*', '', content)
+                original_tags_match = re.findall(r'\[Tags:\s*([^\]]+)\]', stripped_for_match)
+                original_tags = original_tags_match[0] if original_tags_match else ""
+
+                user_match = re.search(r'\[User:\s*([^\]]+)\]', stripped_for_match)
+                model_match = re.search(r'\[Model:\s*([^\]]+)\]', stripped_for_match)
+                bank_match = re.search(r'\[Memory Bank:\s*([^\]]+)\]', stripped_for_match)
+
+                search_text = re.sub(r'\[[^\]]*\]\s*', '', stripped_for_match).strip()
+                if not search_text:
+                    continue
+
+                search_words = set(search_text.lower().split())
+                if len(search_words) < 3:
+                    continue
+
+                query_user_id = mem_user_id
+                if not query_user_id and user_match:
+                    query_user_id = user_match.group(1).strip().lower()
+
+                best_match = None
+                best_score = 0.0
+
+                messages = await self.memory_system.conversations_db.execute_query(
+                    """SELECT message_id, conversation_id, content, user_id, model_id
+                       FROM messages WHERE user_id = ? OR ? = '' ORDER BY timestamp DESC LIMIT 500""",
+                    (query_user_id, query_user_id)
+                )
+
+                for msg in messages:
+                    msg_content = msg["content"] or ""
+                    msg_words = set(msg_content.lower().split())
+                    if not msg_words:
+                        continue
+
+                    overlap = len(search_words & msg_words)
+                    union = len(search_words | msg_words)
+                    score = overlap / union if union > 0 else 0.0
+
+                    if original_tags and any(t.strip().lower() in msg_content.lower() for t in original_tags.split(',')):
+                        score = min(score * 1.5, 1.0)
+
+                    if score > best_score:
+                        best_score = score
+                        best_match = msg
+
+                if best_match and best_score >= 0.15:
+                    conv_id = best_match["conversation_id"]
+                    await self.memory_system.conversations_db.link_memory_to_conversation(
+                        memory_id=mem_id,
+                        conversation_id=conv_id,
+                        link_type="related",
+                        link_strength=min(best_score, 1.0),
+                        source_system="retroactive_link",
+                        metadata={"match_score": best_score, "matched_via": "retroactive_maintenance"}
+                    )
+                    try:
+                        await self.memory_system.ai_memory_db.execute_update(
+                            "UPDATE curated_memories SET source_conversation_id = ? "
+                            "WHERE memory_id = ?",
+                            (conv_id, mem_id)
+                        )
+                    except Exception:
+                        pass
+                    results["linked"] += 1
+                    if results["linked"] % 100 == 0:
+                        logger.info(f"Retroactive linking progress: {results['linked']} linked, {results['unmatched']} unmatched")
+                else:
+                    results["unmatched"] += 1
+
+        except Exception as e:
+            logger.error(f"Error in retroactive linking: {e}")
+            results["errors"] = results.get("errors", 0) + 1
+
+        logger.info(f"Retroactive linking complete: {results['linked']} linked, {results['unmatched']} unmatched, {results['errors']} errors")
+        return results
+
     async def _linking_validation_loop(self):
         """Phase 2: Background task that periodically validates and repairs linking.
         
