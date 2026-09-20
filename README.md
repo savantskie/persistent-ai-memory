@@ -1,8 +1,8 @@
-# Persistent AI Memory System v1.5.0
+# Persistent AI Memory System v2.0.0
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![Release](https://img.shields.io/badge/release-v1.5.0-green.svg)](https://github.com/savantskie/persistent-ai-memory)
+[![Release](https://img.shields.io/badge/release-v2.0.0-green.svg)](https://github.com/savantskie/persistent-ai-memory)
 
 > 🌟 **Community Call to Action**: Have you made improvements or additions to this system? Submit a pull request! Every contributor will be properly credited in the final product.
 
@@ -10,7 +10,43 @@
 
 ---
 
-## 🆕 What's New in v1.5.0 (March 28, 2026)
+## What's New in v2.0.0 (September 20, 2026)
+
+**Full Feature Parity Release** -- PAM is now fully in sync with the internal
+production system. Every feature from months of real-world use is now public.
+
+- **Core Identity System** -- Distills a complete profile of who the user is
+  across all conversations. Pulls from curated memories, the OpenWebUI memory
+  table, and archived databases. Updates incrementally rather than starting
+  from scratch each time.
+- **Automated Memory Maintenance** -- Background tasks reformat old memories,
+  detect contradictions and updates, and link orphaned memories to their source
+  conversations. Includes a backlog processor that deduplicates entries, fills
+  in missing metadata, and re-ranks memory importance using the LLM.
+- **Task Coordinator** -- Centralized scheduler replaces ad-hoc sleep loops.
+  Proper concurrency control with per-database locking and LLM call gating.
+  Detects user activity and waits until idle to run heavy work.
+- **Vision Support** -- Precomputes image embeddings via a separate vision
+  server so the main LLM does not need mmproj loaded. Caches embeddings for
+  cross-turn injection. Works with llama.cpp, LM Studio, and any
+  OpenAI-compatible embedding provider.
+- **Cross-System Deduplication** -- When promoting short-term memories to
+  long-term storage, checks for exact and semantic duplicates. Merges related
+  memories instead of creating redundant copies.
+- **Heartbeat-Based Idle Detection** -- The system respects when you are
+  actively using it and delays heavy background tasks until you are idle.
+- **New Utility Tools** -- Interactive model-specific memory deletion
+  (pam_delete_model_memories.py), memory export to text files
+  (export_memories.py), and MCP tool call filtering (filter_tool_calls.py).
+- **Normalization Migration** -- One-time migration that normalizes user and
+  model IDs for consistent multi-user isolation.
+
+**Upgrade from v1.5.0:** Drop-in replacement. Replace your existing PAM files
+with the new versions. The database schema is backward compatible.
+
+---
+
+## What's New in v1.5.0 (March 28, 2026)
 
 **Major Architectural Rewrite: OpenWebUI-Native Integration**
 - ✅ **OpenWebUI-first design** - AI Memory System now deeply integrated into OpenWebUI via plugin (primary deployment method)
